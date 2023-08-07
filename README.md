@@ -5,7 +5,7 @@ This is not an official python ProtonMail API client. it allows you to read, sen
 ## installation
 install requirements:
 ``` 
-pip install -r requirements.txt
+pip install protonmail-api-client
 ```
 install Playwright:
 ```
