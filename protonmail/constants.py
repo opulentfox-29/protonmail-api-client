@@ -1,9 +1,15 @@
 """Constants."""
 
+import os
+
+
 PM_APP_VERSION_ACCOUNT = 'web-account@5.0.42.1'
 API_VERSION = '4'
 SRP_LEN_BYTES = 256
 SALT_LEN_BYTES = 10
+current_path = os.path.dirname(os.path.abspath(__file__))
+utils_path = f'{current_path}/utils'
+open_pgp_js_url = "https://unpkg.com/openpgp@5.9.0/dist/openpgp.js"
 
 DEFAULT_HEADERS = {
     'authority': 'account.proton.me',
@@ -16,4 +22,19 @@ DEFAULT_HEADERS = {
                   ' Chrome/114.0.0.0 Safari/537.36',
     'x-pm-appversion': 'Other',
     'x-pm-apiversion': API_VERSION,
+}
+
+urls_api = {
+    'api': 'https://api.protonmail.ch/api',
+    'mail': 'https://mail.proton.me/api',
+    'account': 'https://account.proton.me/api',
+    'assets': 'https://account.proton.me/assets'
+}
+
+colors = {
+    "green": "\x1b[32m",
+    "red": "\x1b[31m",
+    "yellow": "\033[93m",
+    "bold": "\x1b[1m",
+    "reset": "\x1b[0m",
 }

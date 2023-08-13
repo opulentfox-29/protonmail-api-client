@@ -54,3 +54,23 @@ class Message:
         ellipsis_str = '...' if len(self.subject) > 20 else ','
         cropped_subject = self.subject[:20]
         return f"<Message [{cropped_subject}{ellipsis_str} id: {self.id[:10]}...]>"
+
+
+@dataclass
+class Conversation:
+    """Conversation."""
+    id: str = ''
+    subject: str = ''
+    senders: list[UserMail] = field(default_factory=list)
+    recipients: list[UserMail] = field(default_factory=list)
+    num_messages: int = 0
+    num_unread: int = 0
+    size: int = 0
+    time: int = 0
+    labels: list[str] = field(default_factory=list)
+    extra: dict = field(default_factory=dict)
+
+    def __str__(self):
+        ellipsis_str = '...' if len(self.subject) > 20 else ','
+        cropped_subject = self.subject[:20]
+        return f"<Conversation [{cropped_subject}{ellipsis_str} id: {self.id[:10]}...]>"

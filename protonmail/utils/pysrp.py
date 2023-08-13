@@ -16,8 +16,9 @@ A,B  Public ephemeral values
 x    Private key (derived from p and s)
 v    Password verifier
 """
+from typing import Union, Optional
 
-from .constants import SRP_LEN_BYTES, SALT_LEN_BYTES
+from protonmail.constants import SRP_LEN_BYTES, SALT_LEN_BYTES
 from .utils import (
     pm_hash,
     bytes_to_long,
@@ -92,7 +93,7 @@ class User:
     def get_challenge(self) -> bytes:
         return long_to_bytes(self.challenge_int, SRP_LEN_BYTES)
 
-    def process_challenge(self, bytes_s: bytes, bytes_server_challenge: bytes) -> bytes | None:
+    def process_challenge(self, bytes_s: bytes, bytes_server_challenge: bytes) -> Union[bytes, None]:
         """Returns M or None if SRP-6a safety check is violated."""
         self.bytes_s = bytes_s
         self.server_challenge_int = bytes_to_long(bytes_server_challenge)
@@ -144,7 +145,7 @@ class User:
         if self.expected_server_proof == server_proof:
             self._authenticated = True
 
-    def compute_v(self, bytes_s: bytes = None) -> tuple[bytes, bytes]:
+    def compute_v(self, bytes_s: Optional[bytes] = None) -> tuple[bytes, bytes]:
         if bytes_s is None:
             self.bytes_s = long_to_bytes(
                 get_random_of_length(SALT_LEN_BYTES),
@@ -167,5 +168,5 @@ class User:
     def get_ephemeral_secret(self) -> bytes:
         return long_to_bytes(self.random_int, SRP_LEN_BYTES)
 
-    def get_session_key(self) -> bytes | None:
+    def get_session_key(self) -> Union[bytes, None]:
         return self.session_key if self._authenticated else None

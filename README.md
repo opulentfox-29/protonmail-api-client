@@ -15,7 +15,7 @@ playwright install
 # Getting Started
 ### Get PGP private key and passphrase
 go to the [Email encryption keys](https://account.proton.me/u/0/mail/encryption-keys#addresses) section, click on "Export private key" (NOT Account keys), create the passphrase
-![1.png](protonmail/assets/1.png)
+![1.png](https://raw.githubusercontent.com/opulentfox-29/protonmail-api-client/master/assets/1.png)
 
 ```py
 from protonmail.client import ProtonMail
@@ -42,10 +42,13 @@ print(message.body)
 
 # Render the template, images downloading, converting to BASE64 and insert into html
 proton.render(message)
+# This is a ready-made html page, with all the pictures, you can save it right away
+with open('message.html', 'w', encoding='utf-8') as f:
+    f.write(message.body)
 print(message.body)
 # <html><body><div>it's my image: <img src="data:image/png;base64, iVBORw0K..">....
 
-# Download file from email
+# Download file from message
 first_file = message.attachments[0]
 proton.download_file(first_file)
 with open(f'{first_file.name}', 'wb') as f:

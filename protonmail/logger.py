@@ -1,5 +1,7 @@
 """Logger."""
 
+from .constants import colors
+
 
 class Logger:
     """
@@ -8,14 +10,6 @@ class Logger:
     WARNING = 3
     ERROR = 4
     """
-    colors = {
-        "green": "\x1b[32m",
-        "red": "\x1b[31m",
-        "yellow": "\033[93m",
-        "bold": "\x1b[1m",
-        "reset": "\x1b[0m",
-    }
-
     def __init__(self, level, func):
         self.level = level
         self.func = func
@@ -32,7 +26,7 @@ class Logger:
         if self.level < 2:
             return
         if self.do_color:
-            status = f"{self.colors[color]}{status}{self.colors['reset']}"
+            status = f"{colors[color]}{status}{colors['reset']}"
         self.func(status)
 
     def warning(self, status: str, color: str = 'yellow') -> None:
@@ -40,7 +34,7 @@ class Logger:
         if self.level < 3:
             return
         if self.do_color:
-            status = f"{self.colors[color]}{status}{self.colors['reset']}"
+            status = f"{colors[color]}{status}{colors['reset']}"
         self.func(status)
 
     def error(self, status: str, color: str = 'red') -> None:
@@ -48,5 +42,5 @@ class Logger:
         if self.level < 4:
             return
         if self.do_color:
-            status = f"{self.colors[color]}{status}{self.colors['reset']}"
+            status = f"{colors[color]}{status}{colors['reset']}"
         self.func(status)

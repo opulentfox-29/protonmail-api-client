@@ -2,61 +2,29 @@
 import os
 from base64 import b64decode, b64encode
 from io import IOBase
+from typing import Union, Optional
 
+import requests
 from Crypto.Cipher import AES
 from pgpy import PGPMessage, PGPKey
 from playwright.sync_api import sync_playwright
 
-
-current_dir = os.path.dirname(os.path.abspath(__file__))
-path_to_pgp_js = f"file:///{current_dir}/utils/openpgp.html"
+from .constants import open_pgp_js_url, utils_path
 
 
 class PGP:
     """PGP"""
-    @staticmethod
-    def create_message(blob: any):
-        """Create new pgp message from blob."""
-        return PGPMessage.new(blob)
-
-    @staticmethod
-    def message(blob: any) -> PGPMessage:
-        """Load pgp message from blob."""
-        return PGPMessage.from_blob(blob)
-
-    @staticmethod
-    def key(blob: any) -> PGPKey:
-        """Load pgp key from blob."""
-        return PGPKey.from_blob(blob)
-
-    @staticmethod
-    def aes256_decrypt(data: bytes, key: bytes) -> bytes:
-        """Decrypt AES256."""
-        iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
-        cipher = AES.new(key, AES.MODE_CFB, iv, segment_size=128)
-        decrypted_data = cipher.decrypt(data)[18:-22]
-
-        return decrypted_data
-
-    @staticmethod
-    def aes_encrypt(message: str, session_key: bytes = None):
-        """Encrypt AES256."""
-        if not session_key:
-            session_key = os.urandom(32)
-
-        iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
-        cipher = AES.new(session_key, AES.MODE_CFB, iv, segment_size=128)
-        encrypted_message = cipher.encrypt(message.encode())
-        body_key = b64encode(session_key)
-
-        return encrypted_message, body_key
-
     def __init__(self):
+        self.pgp_html_url = f'file:///{utils_path}/openpgp.html'
+        self.open_pgp_js_path = f'{utils_path}/openpgp.js'
+        self.iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
         self.public_key = ''
         self.private_key = ''
         self.passphrase = ''
         self.session_key = b''
         self.aes256_keys = {}
+
+        self.__check_js_openpgp()
 
     def import_pgp(self, private_key: str, passphrase: str) -> None:
         """Import pgp private key and passphrase."""
@@ -72,7 +40,7 @@ class PGP:
         else:
             self.private_key = private_key
 
-    def decrypt(self, data: str, private_key: str = None, passphrase: str = None) -> str:
+    def decrypt(self, data: str, private_key: Optional[str] = None, passphrase: Optional[str] = None) -> str:
         """Decrypt pgp with private key & passphrase."""
         if not private_key:
             private_key = self.private_key
@@ -83,11 +51,11 @@ class PGP:
         encrypted_message = self.message(data)
 
         with pgp_private_key.unlock(passphrase) as key:
-            message = key.decrypt(encrypted_message).message
+            message = key.decrypt(encrypted_message).message.encode('latin_1').decode('utf-8')
 
         return message
 
-    def encrypt(self, data: str, public_key: str = None) -> str:
+    def encrypt(self, data: str, public_key: Optional[str] = None) -> str:
         """Encrypt pgp with public key."""
         if not public_key:
             public_key = self.public_key
@@ -99,14 +67,14 @@ class PGP:
         return encrypted_message
 
     def decrypt_session_key(self, encrypted_key: str) -> bytes:
-        """Decrypt session key with OpenPG.js"""
+        """Decrypt session key with OpenPGP.js"""
         if self.aes256_keys.get(encrypted_key):
             return self.aes256_keys[encrypted_key]
 
         with sync_playwright() as context:
             browser = context.webkit.launch()
             page = browser.new_page()
-            page.goto(path_to_pgp_js)
+            page.goto(self.pgp_html_url)
 
             raw_encrypted_key = list(b64decode(encrypted_key))
             args = [self.private_key, self.passphrase, raw_encrypted_key]
@@ -118,15 +86,15 @@ class PGP:
 
         return aes256_key
 
-    def encrypt_with_session_key(self, message: str, session_key: bytes = None) -> tuple[bytes, bytes]:
-        """Encrypt message with session key with OpenPG.js"""
+    def encrypt_with_session_key(self, message: str, session_key: Optional[bytes] = None) -> tuple[bytes, bytes]:
+        """Encrypt message with session key with OpenPGP.js"""
         if not session_key:
             session_key = os.urandom(32)
 
         with sync_playwright() as context:
             browser = context.webkit.launch()
             page = browser.new_page()
-            page.goto(path_to_pgp_js)
+            page.goto(self.pgp_html_url)
 
             args = [
                 self.private_key,
@@ -142,18 +110,46 @@ class PGP:
 
         return body_message, session_key
 
-    def js_decrypt_message(self, data: str) -> str:
-        """Decrypt pgp message with OpenPG.js"""
-        with sync_playwright() as context:
-            browser = context.webkit.launch()
-            page = browser.new_page()
-            page.goto(path_to_pgp_js)
+    def aes256_decrypt(self, data: bytes, key: bytes) -> Union[bytes, int]:
+        """Decrypt AES256."""
+        cipher = AES.new(key, AES.MODE_CFB, self.iv, segment_size=128)
+        decrypted_data = cipher.decrypt(data)[18:-22]
 
-            args = [data, self.private_key, self.passphrase]
+        return decrypted_data
 
-            decrypted_message = page.evaluate(f'decryptMessage({args})')
-            decrypted_message = bytes(decrypted_message['data'].values()).decode()
+    def aes_encrypt(self, message: str, session_key: Optional[bytes] = None) -> tuple[bytes, bytes]:
+        """Encrypt AES256."""
+        if not session_key:
+            session_key = os.urandom(32)
 
-            browser.close()
+        cipher = AES.new(session_key, AES.MODE_CFB, self.iv, segment_size=128)
+        encrypted_message = cipher.encrypt(message.encode())
+        body_key = b64encode(session_key)
 
-        return decrypted_message
+        return encrypted_message, body_key
+
+    @staticmethod
+    def create_message(blob: any):
+        """Create new pgp message from blob."""
+        return PGPMessage.new(blob)
+
+    @staticmethod
+    def message(blob: any) -> PGPMessage:
+        """Load pgp message from blob."""
+        return PGPMessage.from_blob(blob)
+
+    @staticmethod
+    def key(blob: any) -> PGPKey:
+        """Load pgp key from blob."""
+        return PGPKey.from_blob(blob)
+
+    def __check_js_openpgp(self):
+        if not os.path.isfile(self.open_pgp_js_path):
+            self.__download_js_openpgp()
+
+    def __download_js_openpgp(self):
+        response = requests.get(open_pgp_js_url)
+
+        with open(self.open_pgp_js_path, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+            

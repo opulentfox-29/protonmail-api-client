@@ -8,6 +8,9 @@ from email.mime.text import MIMEText
 from email.parser import Parser
 from base64 import b64encode, b64decode
 import random
+from math import ceil
+from threading import Thread
+from typing import Optional, Coroutine
 
 import unicodedata
 from requests import Session
@@ -16,9 +19,9 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .models import Attachment, Message, UserMail
-from .utils.constants import DEFAULT_HEADERS
-from .utils._pysrp import User
+from .models import Attachment, Message, UserMail, Conversation
+from .constants import DEFAULT_HEADERS, urls_api
+from .utils.pysrp import User
 from .logger import Logger
 from .pgp import PGP
 
@@ -27,85 +30,6 @@ class ProtonMail:
     """
     Client for api protonmail.
     """
-    @staticmethod
-    def _convert_dict_to_message(response: dict) -> Message:
-        """
-        Converts dictionary to message object.
-
-        :param response: The dictionary from which the message will be created.
-        :type response: ``dict``
-        :returns: :py:obj:`Message`
-        """
-        to = [UserMail(user['Name'], user['Address']) for user in response['ToList']]
-        attachments_dict = response.get('Attachments', [])
-        attachments = []
-        for attachment in attachments_dict:
-            is_inserted = attachment['Disposition'] == 'inline'
-            cid = attachment['Headers'].get('content-id')
-            if cid:
-                cid = cid[1:-1]
-            attachments.append(
-                Attachment(
-                    id=attachment['ID'],
-                    name=attachment['Name'],
-                    size=attachment['Size'],
-                    type=attachment['MIMEType'],
-                    is_inserted=is_inserted,
-                    key_packets=attachment['KeyPackets'],
-                    cid=cid,
-                    extra=attachment
-                )
-            )
-
-        message = Message(
-            id=response['ID'],
-            conversation_id=response['ConversationID'],
-            subject=response['Subject'],
-            unread=response['Unread'],
-            sender=UserMail(response['Sender']['Name'], response['Sender']['Address']),
-            to=to,
-            time=response['Time'],
-            size=response['Size'],
-            body=response.get('Body', ''),
-            type=response.get('MIMEType', ''),
-            labels=response['LabelIDs'],
-            attachments=attachments,
-            extra=response,
-        )
-        return message
-
-    @staticmethod
-    def _prepare_message(data: str) -> str:
-        """Converting an unencrypted message into a multipart mime."""
-        data_base64 = b64encode(data.encode())
-
-        msg_mixed = MIMEMultipart('mixed')
-        msg_alt = MIMEMultipart('alternative')
-        msg_plain = MIMEText('', _subtype='plain')
-        msg_related = MIMEMultipart('related')
-        msg_base = MIMEText('', _subtype='html')
-
-        msg_base.replace_header('Content-Transfer-Encoding', 'base64')
-        msg_base.set_payload(data_base64, 'utf-8')
-
-        msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
-        msg_plain.set_payload('hello', 'utf-8')
-
-        msg_alt.attach(msg_plain)
-        msg_related.attach(msg_base)
-        msg_alt.attach(msg_related)
-
-        msg_mixed.attach(msg_alt)
-        message = msg_mixed.as_string().replace('MIME-Version: 1.0\n', '')
-
-        return message
-
-    @staticmethod
-    def __update_attachment_content(attachment, content):
-        attachment.content = content
-        attachment.is_decrypted = True
-        attachment.size = len(content)
-
     def __init__(self, logging_level: int = 2, logging_func: callable = print):
         """
         :param logging_level: logging level 1-4 (DEBUG, INFO, WARNING, ERROR), default 2[INFO].
@@ -119,13 +43,6 @@ class ProtonMail:
         self.account_id = ''
         self.account_email = ''
         self.account_name = ''
-
-        self.urls_api = {
-            'api': 'https://api.protonmail.ch/api',
-            'mail': 'https://mail.proton.me/api',
-            'account': 'https://account.proton.me/api',
-            'assets': 'https://account.proton.me/assets'
-        }
 
         self.session = Session()
         self.session.headers.update(DEFAULT_HEADERS)
@@ -167,68 +84,87 @@ class ProtonMail:
         :type page_size: ``int``
         :returns: :py:obj:`list[Message]`
         """
-        page = 1
-        messages = self._get_messages(page)
+        count_page = ceil(self.get_messages_count()[5]['Total'] / page_size)
+        args_list = [(page_num, page_size) for page_num in range(count_page)]
+        messages_list = self._process_for_async(self.__async_get_messages, args_list)
+        messages = []
+        [messages.extend(_messages) for _messages in messages_list]
 
-        if len(messages) >= 150:
-            messages += self._get_messages(page + 1, page_size)
+        return messages
+
+    def get_messages_by_page(self, page: int, page_size: int = 150) -> list[dict]:
+        """Get messages by page, sorted by time."""
+        args_list = [(page, page_size)]
+        messages_list = self._process_for_async(self.__async_get_messages, args_list)
+        messages = []
+        [messages.extend(_messages) for _messages in messages_list]
+
+        return messages
+
+    def get_messages_count(self) -> list[dict]:
+        """get total count of messages, count of unread messages."""
+        response = self._get('mail', 'mail/v4/messages/count').json()['Counts']
+        return response
+
+    def read_conversation(self, conversation_id: str) -> list[Message]:
+        """Read conversation by conversation ID."""
+        response = self._get('mail', f'mail/v4/conversations/{conversation_id}')
+        messages = response.json()['Messages']
         messages = [self._convert_dict_to_message(message) for message in messages]
 
         return messages
 
-    def get_messages_by_page(self, page: int) -> list[dict]:
-        """Get messages by page, sorted by time."""
-        return self._get_messages(page)
-
-    def read_conversation(self, conversation_id: str) -> list[dict]:
-        """Read conversation by conversation ID."""
-        response = self._get(self.urls_api['mail'], f'mail/v4/conversations/{conversation_id}')
-        messages = response.json()['Messages']
-
-        return messages
-
-    def get_conversations(self, page: int = 1) -> list[dict]:
+    def get_conversations(self, page_size: int = 150) -> list[Conversation]:
         """Get all conversations, sorted by time."""
-        params = {
-            "Page": page - 1,
-            "PageSize": "150",
-            "Limit": "150",
-            'LabelID': 0,
-            "Sort": "Time",
-            "Desc": "1",
-            # 'Attachments': 1, # only get messages with attachments
-        }
+        count_page = ceil(self.get_messages_count()[0]['Total'] / page_size)
+        args_list = [(page_num, page_size) for page_num in range(count_page)]
+        conversations_list = self._process_for_async(self.__async_get_conversations, args_list)
+        conversations = []
+        [conversations.extend(_conversations) for _conversations in conversations_list]
+        conversations = [self._convert_dict_to_conversation(conversation) for conversation in conversations]
 
-        response = self._get(self.urls_api['mail'], 'mail/v4/conversations', params=params)
-        conversations = response.json()['Conversations']
+        return conversations
 
-        if len(conversations) >= 150:
-            conversations += self.get_conversations(page + 1)
+    def get_conversations_by_page(self, page: int, page_size: int = 150) -> list[Conversation]:
+        """Get conversations by page, sorted by time."""
+        args_list = [(page, page_size)]
+        conversations_list = self._process_for_async(self.__async_get_conversations, args_list)
+        conversations = []
+        [conversations.extend(_conversations) for _conversations in conversations_list]
+        conversations = [self._convert_dict_to_conversation(conversation) for conversation in conversations]
 
         return conversations
 
     def decrypt_conversation(self, conversation_id: dict) -> dict:
         """Decrypt conversation by ID."""
         conversation = self._get(
-            self.urls_api['api'],
+            'api',
             f'mail/v4/conversations/{conversation_id}'
         ).json()
         messages = filter(None, (msg.get('Body') for msg in conversation.get('Messages', [])))
         return {'id': conversation_id, 'data': [self.pgp.decrypt(data) for data in messages]}
 
-    def read_message(self, _id: str) -> Message:
+    def get_conversations_count(self) -> list[dict]:
+        """get total count of conversations, count of unread conversations."""
+        response = self._get('mail', 'mail/v4/conversations/count').json()['counts']
+        return response
+
+    def read_message(self, _id: str, mark_as_read: bool = True) -> Message:
         """
         Read message by ID.
 
         :param _id: the id of the message you want to read.
         :type _id: ``str``
+
+        :param mark_as_read: Mark message as read.
+        :type mark_as_read: ``bool``
         :returns: :py:obj:`Message`
         """
-        response = self._get(self.urls_api['mail'], f'mail/v4/messages/{_id}')
+        response = self._get('mail', f'mail/v4/messages/{_id}')
         message = response.json()['Message']
         message = self._convert_dict_to_message(message)
 
-        message.body = self.pgp.js_decrypt_message(message.body)
+        message.body = self.pgp.decrypt(message.body)
 
         parser = Parser()
         msg = parser.parsestr(message.body)
@@ -268,6 +204,9 @@ class ProtonMail:
 
             message.body = body_html if body_html else body_text
 
+        if mark_as_read:
+            self.mark_messages_as_read([message])
+
         return message
 
     def render(self, message: Message) -> None:
@@ -279,8 +218,9 @@ class ProtonMail:
         :type message: ``Message``
         :returns: :py:obj:`None`
         """
-        images = [img for img in message.attachments if img.is_inserted and not img.is_decrypted]
-        images = self.download_files(images)
+        images_for_download = [img for img in message.attachments if img.is_inserted and not img.is_decrypted]
+        self.download_files(images_for_download)
+        images = [img for img in message.attachments if img.is_inserted]
 
         for image in images:
             image_b64 = b64encode(image.content).decode()
@@ -296,19 +236,11 @@ class ProtonMail:
         :type attachments: ``list``
         :returns: :py:obj:`list[attachment]`
         """
-        results = self._process_for_async(self.__async_download_file, attachments)
-
-        for attachment, content in results:
-            _id = attachment.id
-            key_packets = attachment.key_packets
-
-            content = self.pgp.message(content).message.ct
-            key = self.pgp.decrypt_session_key(key_packets)
-            packet_bytes = self.pgp.aes256_decrypt(content, key)
-
-            attachment_bin = self.pgp.message(packet_bytes).message
-
-            self.__update_attachment_content(attachment, attachment_bin)
+        args_list = [(attachment, ) for attachment in attachments]
+        results = self._process_for_async(self.__async_download_file, args_list)
+        threads = [Thread(target=self.__decrypt_file, args=result) for result in results]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
 
         return attachments
 
@@ -364,7 +296,7 @@ class ProtonMail:
             "Content-Type": multipart.content_type
         }
         response = self._post(
-            self.urls_api['mail'],
+            'mail',
             f'mail/v4/messages/{draft.id}',
             headers=headers,
             params=params,
@@ -404,7 +336,7 @@ class ProtonMail:
         }
 
         response = self._post(
-            self.urls_api['mail'],
+            'mail',
             'mail/v4/messages',
             json=json_data
         ).json()['Message']
@@ -425,7 +357,19 @@ class ProtonMail:
             "IDs": ids,
         }
 
-        self._put(self.urls_api['mail'], 'mail/v4/messages/delete', json=data)
+        self._put('mail', 'mail/v4/messages/delete', json=data)
+
+    def mark_messages_as_read(self, messages: list[Message]) -> None:
+        """
+        Mark as read messages.
+
+        :param messages: list of messages.
+        :type messages: :py:obj:`Message`
+        """
+        data = {
+            'IDs': [i.id for i in messages],
+        }
+        self._put('mail', 'mail/v4/messages/read', json=data)
 
     def pgp_import(self, private_key: str, passphrase: str) -> None:
         """
@@ -441,15 +385,15 @@ class ProtonMail:
 
     def get_user_info(self) -> dict:
         """User information."""
-        return self._get(self.urls_api['account'], 'core/v4/users').json()
+        return self._get('account', 'core/v4/users').json()
 
     def get_all_sessions(self) -> dict:
         """Get a list of all sessions."""
-        return self._get(self.urls_api['account'], 'auth/v4/sessions').json()
+        return self._get('account', 'auth/v4/sessions').json()
 
     def revoke_all_sessions(self) -> dict:
         """revoke all sessions except the current one."""
-        return self._delete(self.urls_api['account'], 'auth/v4/sessions').json()
+        return self._delete('account', 'auth/v4/sessions').json()
 
     def save_session(self, path: str) -> None:
         """
@@ -504,6 +448,110 @@ class ProtonMail:
         for name, value in cookies.items():
             self.session.cookies.set(name, value)
 
+    @staticmethod
+    def _convert_dict_to_message(response: dict) -> Message:
+        """
+        Converts dictionary to message object.
+
+        :param response: The dictionary from which the message will be created.
+        :type response: ``dict``
+        :returns: :py:obj:`Message`
+        """
+        to = [UserMail(user['Name'], user['Address']) for user in response['ToList']]
+        attachments_dict = response.get('Attachments', [])
+        attachments = []
+        for attachment in attachments_dict:
+            is_inserted = attachment['Disposition'] == 'inline'
+            cid = attachment['Headers'].get('content-id')
+            if cid:
+                cid = cid[1:-1]
+            attachments.append(
+                Attachment(
+                    id=attachment['ID'],
+                    name=attachment['Name'],
+                    size=attachment['Size'],
+                    type=attachment['MIMEType'],
+                    is_inserted=is_inserted,
+                    key_packets=attachment['KeyPackets'],
+                    cid=cid,
+                    extra=attachment
+                )
+            )
+
+        message = Message(
+            id=response['ID'],
+            conversation_id=response['ConversationID'],
+            subject=response['Subject'],
+            unread=response['Unread'],
+            sender=UserMail(response['Sender']['Name'], response['Sender']['Address']),
+            to=to,
+            time=response['Time'],
+            size=response['Size'],
+            body=response.get('Body', ''),
+            type=response.get('MIMEType', ''),
+            labels=response['LabelIDs'],
+            attachments=attachments,
+            extra=response,
+        )
+        return message
+
+    @staticmethod
+    def _convert_dict_to_conversation(response: dict) -> Conversation:
+        """
+        Converts dictionary to conversation object.
+
+        :param response: The dictionary from which the conversation will be created.
+        :type response: ``dict``
+        :returns: :py:obj:`Conversation`
+        """
+        senders = [UserMail(user['Name'], user['Address']) for user in response['Senders']]
+        recipients = [UserMail(user['Name'], user['Address']) for user in response['Recipients']]
+        conversation = Conversation(
+            id=response['ID'],
+            subject=response['Subject'],
+            senders=senders,
+            recipients=recipients,
+            num_messages=response['NumMessages'],
+            num_unread=response['NumUnread'],
+            time=response['Time'],
+            size=response['Size'],
+            labels=response['LabelIDs'],
+            extra=response,
+        )
+        return conversation
+
+    @staticmethod
+    def _prepare_message(data: str) -> str:
+        """Converting an unencrypted message into a multipart mime."""
+        data_base64 = b64encode(data.encode())
+
+        msg_mixed = MIMEMultipart('mixed')
+        msg_alt = MIMEMultipart('alternative')
+        msg_plain = MIMEText('', _subtype='plain')
+        msg_related = MIMEMultipart('related')
+        msg_base = MIMEText('', _subtype='html')
+
+        msg_base.replace_header('Content-Transfer-Encoding', 'base64')
+        msg_base.set_payload(data_base64, 'utf-8')
+
+        msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
+        msg_plain.set_payload('hello', 'utf-8')
+
+        msg_alt.attach(msg_plain)
+        msg_related.attach(msg_base)
+        msg_alt.attach(msg_related)
+
+        msg_mixed.attach(msg_alt)
+        message = msg_mixed.as_string().replace('MIME-Version: 1.0\n', '')
+
+        return message
+
+    @staticmethod
+    def __update_attachment_content(attachment, content):
+        attachment.content = content
+        attachment.is_decrypted = True
+        attachment.size = len(content)
+
     def _parse_info_before_login(self, info, password: str) -> tuple[str, str, str]:
         verified = self.pgp.message(info['Modulus'])
         modulus = b64decode(verified.message)
@@ -531,11 +579,10 @@ class ProtonMail:
     def _parse_info_after_login(self, auth: dict) -> None:
         self.pgp.session_key = self.user.get_session_key()
 
-        if auth['UID']:
-            self.session.headers.update({
-                'authorization': f'Bearer {auth["AccessToken"]}',
-                'x-pm-uid': auth['UID'],
-            })
+        self.session.headers.update({
+            'authorization': f'{auth["TokenType"]} {auth["AccessToken"]}',
+            'x-pm-uid': auth['UID'],
+        })
 
         address = self.__addresses()['Addresses'][0]
 
@@ -546,41 +593,64 @@ class ProtonMail:
         keys = address['Keys'][0]
         self.pgp.public_key = keys['PublicKey']
 
-    def _get_messages(self, page: int, page_size: int = 150) -> list:
+    async def __async_get_messages(self, client: ClientSession, page: int, page_size: int = 150) -> list:
         params = {
-            "Page": page - 1,
+            "Page": page,
             "PageSize": page_size,
-            "Limit": "150",
+            "Limit": page_size,
             "LabelID": "5",
             "Sort": "Time",
             "Desc": "1",
         }
+        response = await client.get(f"{urls_api['mail']}/mail/v4/messages", params=params)
+        messages = await response.json()
+        return messages['Messages']
 
-        response = self._get(self.urls_api['mail'], 'mail/v4/messages', params=params)
-        messages = response.json()['Messages']
+    async def __async_get_conversations(self, client: ClientSession, page: int, page_size: int = 150) -> list:
+        params = {
+            "Page": page,
+            "PageSize": page_size,
+            "Limit": page_size,
+            "LabelID": 0,
+            "Sort": "Time",
+            "Desc": "1",
+            # 'Attachments': 1, # only get messages with attachments
+        }
+        response = await client.get(f"{urls_api['mail']}/mail/v4/conversations", params=params)
+        conversations = await response.json()
+        return conversations['Conversations']
 
-        return messages
-
-    def _process_for_async(self, func: callable, args_list: list[any]) -> list[any]:
+    def _process_for_async(self, func: callable, args_list: list[tuple]) -> list[any]:
         results = asyncio.run(
             self.__async_process(func, args_list)
         )
         return results
 
-    async def __async_process(self, func: callable, args_list: list[any]) -> list[any]:
+    async def __async_process(self, func: callable, args_list: list[tuple[any]]) -> list[Coroutine]:
         connector = TCPConnector(limit=100)
         headers = dict(self.session.headers)
         cookies = self.session.cookies.get_dict()
 
         async with ClientSession(headers=headers, cookies=cookies, connector=connector) as client:
-            funcs = (func(client, args) for args in args_list)
+            funcs = (func(client, *args) for args in args_list)
             return await tqdm_asyncio.gather(*funcs, desc=func.__name__)
 
     async def __async_download_file(self, client: ClientSession, image: Attachment) -> tuple[Attachment, bytes]:
         _id = image.id
-        response = await client.get(f"{self.urls_api['mail']}/mail/v4/attachments/{_id}")
+        response = await client.get(f"{urls_api['mail']}/mail/v4/attachments/{_id}")
         content = await response.read()
         return image, content
+
+    def __decrypt_file(self, attachment: Attachment, content: bytes) -> None:
+        key_packets = attachment.key_packets
+
+        content = self.pgp.message(content).message.ct
+        key = self.pgp.decrypt_session_key(key_packets)
+        packet_bytes = self.pgp.aes256_decrypt(content, key)
+
+        attachment_bin = self.pgp.message(packet_bytes).message
+
+        self.__update_attachment_content(attachment, attachment_bin)
 
     def _get(self, base: str, endpoint: str, **kwargs) -> Response:
         return self.__request('get', base, endpoint, **kwargs)
@@ -601,11 +671,12 @@ class ProtonMail:
             'put': self.session.put,
             'delete': self.session.delete
         }
-        return methods[method](f'{base}/{endpoint}', **kwargs)
+        response = methods[method](f'{urls_api[base]}/{endpoint}', **kwargs)
+        return response
 
     def __addresses(self, params: dict = None) -> dict:
         params = params or {
             'Page': 0,
             'PageSize': 150,  # max page size
         }
-        return self._get(self.urls_api['api'], 'core/v4/addresses', params=params).json()
+        return self._get('api', 'core/v4/addresses', params=params).json()

@@ -9,7 +9,7 @@ import os
 
 import bcrypt
 
-from .constants import SRP_LEN_BYTES
+from protonmail.constants import SRP_LEN_BYTES
 
 
 class PMHash:
