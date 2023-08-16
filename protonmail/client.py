@@ -86,18 +86,18 @@ class ProtonMail:
         """
         count_page = ceil(self.get_messages_count()[5]['Total'] / page_size)
         args_list = [(page_num, page_size) for page_num in range(count_page)]
-        messages_list = self._process_for_async(self.__async_get_messages, args_list)
-        messages = []
-        [messages.extend(_messages) for _messages in messages_list]
+        messages_lists = self._process_for_async(self.__async_get_messages, args_list)
+        messages_dict = self._flattening_lists(messages_lists)
+        messages = [self._convert_dict_to_message(message) for message in messages_dict]
 
         return messages
 
-    def get_messages_by_page(self, page: int, page_size: int = 150) -> list[dict]:
+    def get_messages_by_page(self, page: int, page_size: int = 150) -> list[Message]:
         """Get messages by page, sorted by time."""
         args_list = [(page, page_size)]
-        messages_list = self._process_for_async(self.__async_get_messages, args_list)
-        messages = []
-        [messages.extend(_messages) for _messages in messages_list]
+        messages_lists = self._process_for_async(self.__async_get_messages, args_list)
+        messages_dict = self._flattening_lists(messages_lists)
+        messages = [self._convert_dict_to_message(message) for message in messages_dict]
 
         return messages
 
@@ -118,20 +118,18 @@ class ProtonMail:
         """Get all conversations, sorted by time."""
         count_page = ceil(self.get_messages_count()[0]['Total'] / page_size)
         args_list = [(page_num, page_size) for page_num in range(count_page)]
-        conversations_list = self._process_for_async(self.__async_get_conversations, args_list)
-        conversations = []
-        [conversations.extend(_conversations) for _conversations in conversations_list]
-        conversations = [self._convert_dict_to_conversation(conversation) for conversation in conversations]
+        conversations_lists = self._process_for_async(self.__async_get_conversations, args_list)
+        conversations_dict = self._flattening_lists(conversations_lists)
+        conversations = [self._convert_dict_to_conversation(c) for c in conversations_dict]
 
         return conversations
 
     def get_conversations_by_page(self, page: int, page_size: int = 150) -> list[Conversation]:
         """Get conversations by page, sorted by time."""
         args_list = [(page, page_size)]
-        conversations_list = self._process_for_async(self.__async_get_conversations, args_list)
-        conversations = []
-        [conversations.extend(_conversations) for _conversations in conversations_list]
-        conversations = [self._convert_dict_to_conversation(conversation) for conversation in conversations]
+        conversations_lists = self._process_for_async(self.__async_get_conversations, args_list)
+        conversations_dict = self._flattening_lists(conversations_lists)
+        conversations = [self._convert_dict_to_conversation(c) for c in conversations_dict]
 
         return conversations
 
@@ -447,6 +445,15 @@ class ProtonMail:
         self.session.headers = headers
         for name, value in cookies.items():
             self.session.cookies.set(name, value)
+
+    @staticmethod
+    def _flattening_lists(list_of_lists: list[list[any]]) -> list[any]:
+        flattened_list = [
+            item
+            for items_list in list_of_lists
+            for item in items_list
+        ]
+        return flattened_list
 
     @staticmethod
     def _convert_dict_to_message(response: dict) -> Message:
