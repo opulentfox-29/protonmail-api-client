@@ -51,7 +51,13 @@ class PGP:
         encrypted_message = self.message(data)
 
         with pgp_private_key.unlock(passphrase) as key:
-            message = key.decrypt(encrypted_message).message.encode('latin_1').decode('utf-8')
+            message = key.decrypt(encrypted_message).message
+
+        # Some messages are encoded in latin _1, so we will recode them in utf-8
+        try:
+            message = message.encode('latin_1').decode('utf-8')
+        except UnicodeEncodeError:
+            pass
 
         return message
 
