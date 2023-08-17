@@ -1,6 +1,5 @@
 """Dataclasses."""
-
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 
 @dataclass
@@ -8,9 +7,18 @@ class UserMail:
     """User."""
     name: str = ''
     address: str = ''
+    extra: dict = field(default_factory=dict)
 
     def __str__(self):
         return f"<UserMail [{self.address}]>"
+
+    def to_dict(self) -> dict[str, any]:
+        """
+        Object to dict
+
+        :returns: :py:obj:`dict`
+        """
+        return asdict(self)
 
 
 @dataclass
@@ -32,6 +40,14 @@ class Attachment:
         cropped_name = self.name[:20]
         return f"<Attachment [{cropped_name}{ellipsis_str} {self.size} bytes]>"
 
+    def to_dict(self) -> dict[str, any]:
+        """
+        Object to dict
+
+        :returns: :py:obj:`dict`
+        """
+        return asdict(self)
+
 
 @dataclass
 class Message:
@@ -41,7 +57,7 @@ class Message:
     subject: str = ''
     unread: bool = False
     sender: UserMail = field(default_factory=UserMail)
-    to: list[UserMail] = field(default_factory=list)
+    recipients: list[UserMail] = field(default_factory=list)
     time: int = 0
     size: int = 0
     body: str = ''
@@ -54,6 +70,14 @@ class Message:
         ellipsis_str = '...' if len(self.subject) > 20 else ','
         cropped_subject = self.subject[:20]
         return f"<Message [{cropped_subject}{ellipsis_str} id: {self.id[:10]}...]>"
+
+    def to_dict(self) -> dict[str, any]:
+        """
+        Object to dict
+
+        :returns: :py:obj:`dict`
+        """
+        return asdict(self)
 
 
 @dataclass
@@ -74,3 +98,11 @@ class Conversation:
         ellipsis_str = '...' if len(self.subject) > 20 else ','
         cropped_subject = self.subject[:20]
         return f"<Conversation [{cropped_subject}{ellipsis_str} id: {self.id[:10]}...]>"
+
+    def to_dict(self) -> dict[str, any]:
+        """
+        Object to dict
+
+        :returns: :py:obj:`dict`
+        """
+        return asdict(self)

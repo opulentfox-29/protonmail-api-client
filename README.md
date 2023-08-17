@@ -2,19 +2,19 @@ This is not an official python ProtonMail API client. it allows you to read, sen
 
 > Unfortunately, I could not find an analogue of DecryptSessionKeys from OpenPG.js, so this uses Playwright to execute js. if you have any ideas write to me
 
-## installation
-install requirements:
+## Installation
+Install requirements:
 ``` 
 pip install protonmail-api-client
 ```
-install Playwright:
+Install Playwright:
 ```
 playwright install
 ```
 
 # Getting Started
 ### Get PGP private key and passphrase
-go to the [Email encryption keys](https://account.proton.me/u/0/mail/encryption-keys#addresses) section, click on "Export private key" (NOT Account keys), create the passphrase
+Go to the [Email encryption keys](https://account.proton.me/u/0/mail/encryption-keys#addresses) section, click on "Export private key" (NOT the Account keys), create the passphrase.
 ![1.png](https://raw.githubusercontent.com/opulentfox-29/protonmail-api-client/master/assets/1.png)
 
 ```py
@@ -34,7 +34,7 @@ proton.pgp_import(private_key, passphrase=passphrase)
 messages = proton.get_messages()
 
 # Read the latest message
-message = proton.read_message(messages[0].id)
+message = proton.read_message(messages[0])
 print(message.sender.address)  # sender address
 print(message.subject)  # subject
 print(message.body)
@@ -50,18 +50,25 @@ print(message.body)
 
 # Download file from message
 first_file = message.attachments[0]
-proton.download_file(first_file)
+proton.download_files([first_file])
 with open(f'{first_file.name}', 'wb') as f:
     f.write(first_file.content)
 
 # Send message
-to = "to@proton.me"
+recipients = ["to@proton.me", "to2@proton.me"]
 subject = "My first message"
 body = "<html><body>hello, i sent my first mail!</body></html>"  # html or just text
-message = proton.send_message(to, subject, body)
 
-# Delete message
-proton.delete_message(message)
+new_message = proton.create_message(
+    recipients=recipients,
+    subject=subject,
+    body=body
+)
+
+sent_message = proton.send_message(new_message)
+
+# Delete messages
+proton.delete_messages([message])
 
 # Save session, you do not have to re-enter your login, password, pgp key, passphrase
 # WARNING: the file contains sensitive data, do not share it with anyone,
@@ -72,10 +79,9 @@ proton.save_session('session.pickle')
 proton = ProtonMail()
 proton.load_session('session.pickle')
 
-# getting a list of all sessions in which you are authorized
+# Getting a list of all sessions in which you are authorized
 proton.get_all_sessions()
 
-# revoke all sessions except the current one
+# Revoke all sessions except the current one
 proton.revoke_all_sessions()
 ```
-

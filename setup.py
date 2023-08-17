@@ -15,7 +15,7 @@ install_requires = [
 
 setup(
     name='protonmail-api-client',
-    version='1.0.5',
+    version='1.1.0',
     python_requires='>=3.9',
     description='This is not an official python ProtonMail API client. it allows you to read, send and delete messages in protonmail, as well as render a ready-made template with embedded images.',
     long_description=Path("README.md").read_text(encoding="utf-8"),

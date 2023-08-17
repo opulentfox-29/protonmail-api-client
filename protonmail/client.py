@@ -3,6 +3,7 @@
 import asyncio
 import pickle
 import string
+from copy import deepcopy
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.parser import Parser
@@ -10,7 +11,7 @@ from base64 import b64encode, b64decode
 import random
 from math import ceil
 from threading import Thread
-from typing import Optional, Coroutine
+from typing import Optional, Coroutine, Union
 
 import unicodedata
 from requests import Session
@@ -30,7 +31,7 @@ class ProtonMail:
     """
     Client for api protonmail.
     """
-    def __init__(self, logging_level: int = 2, logging_func: callable = print):
+    def __init__(self, logging_level: Optional[int] = 2, logging_func: Optional[callable] = print):
         """
         :param logging_level: logging level 1-4 (DEBUG, INFO, WARNING, ERROR), default 2[INFO].
         :type logging_level: ``int``
@@ -76,7 +77,35 @@ class ProtonMail:
 
         self._parse_info_after_login(auth)
 
-    def get_messages(self, page_size: int = 150) -> list[Message]:
+    def read_message(
+            self,
+            message_or_id: Union[Message, str],
+            mark_as_read: Optional[bool] = True
+    ) -> Message:
+        """
+        Read message.
+
+        :param message_or_id: Message or id of the message you want to read.
+        :type message_or_id: ``str``
+
+        :param mark_as_read: Mark message as read.
+        :type mark_as_read: ``bool``
+        :returns: :py:obj:`Message`
+        """
+        _id = message_or_id.id if isinstance(message_or_id, Message) else message_or_id
+        response = self._get('mail', f'mail/v4/messages/{_id}')
+        message = response.json()['Message']
+        message = self._convert_dict_to_message(message)
+
+        message.body = self.pgp.decrypt(message.body)
+        self._multipart_decrypt(message)
+
+        if mark_as_read:
+            self.mark_messages_as_read([message])
+
+        return message
+
+    def get_messages(self, page_size: Optional[int] = 150) -> list[Message]:
         """
         Get all messages, sorted by time.
 
@@ -86,16 +115,16 @@ class ProtonMail:
         """
         count_page = ceil(self.get_messages_count()[5]['Total'] / page_size)
         args_list = [(page_num, page_size) for page_num in range(count_page)]
-        messages_lists = self._process_for_async(self.__async_get_messages, args_list)
+        messages_lists = self._async_helper(self._async_get_messages, args_list)
         messages_dict = self._flattening_lists(messages_lists)
         messages = [self._convert_dict_to_message(message) for message in messages_dict]
 
         return messages
 
-    def get_messages_by_page(self, page: int, page_size: int = 150) -> list[Message]:
+    def get_messages_by_page(self, page: int, page_size: Optional[int] = 150) -> list[Message]:
         """Get messages by page, sorted by time."""
         args_list = [(page, page_size)]
-        messages_lists = self._process_for_async(self.__async_get_messages, args_list)
+        messages_lists = self._async_helper(self._async_get_messages, args_list)
         messages_dict = self._flattening_lists(messages_lists)
         messages = [self._convert_dict_to_message(message) for message in messages_dict]
 
@@ -106,106 +135,53 @@ class ProtonMail:
         response = self._get('mail', 'mail/v4/messages/count').json()['Counts']
         return response
 
-    def read_conversation(self, conversation_id: str) -> list[Message]:
-        """Read conversation by conversation ID."""
-        response = self._get('mail', f'mail/v4/conversations/{conversation_id}')
+    def read_conversation(self, conversation_or_id: Union[Conversation, str]) -> list[Message]:
+        """
+        Read conversation by conversation or ID.
+
+        :param conversation_or_id: Conversation or id of the conversation you want to read.
+        :type conversation_or_id: ``Conversation`` or ``str``
+        :returns: :py:obj:`Message`
+        """
+        _id = (
+            conversation_or_id.id
+            if isinstance(conversation_or_id, Conversation)
+            else conversation_or_id)
+        response = self._get('mail', f'mail/v4/conversations/{_id}')
         messages = response.json()['Messages']
         messages = [self._convert_dict_to_message(message) for message in messages]
+        messages[-1].body = self.pgp.decrypt(messages[-1].body)
+        self._multipart_decrypt(messages[-1])
 
         return messages
 
-    def get_conversations(self, page_size: int = 150) -> list[Conversation]:
+    def get_conversations(self, page_size: Optional[int] = 150) -> list[Conversation]:
         """Get all conversations, sorted by time."""
         count_page = ceil(self.get_messages_count()[0]['Total'] / page_size)
         args_list = [(page_num, page_size) for page_num in range(count_page)]
-        conversations_lists = self._process_for_async(self.__async_get_conversations, args_list)
+        conversations_lists = self._async_helper(self._async_get_conversations, args_list)
         conversations_dict = self._flattening_lists(conversations_lists)
         conversations = [self._convert_dict_to_conversation(c) for c in conversations_dict]
 
         return conversations
 
-    def get_conversations_by_page(self, page: int, page_size: int = 150) -> list[Conversation]:
+    def get_conversations_by_page(
+            self,
+            page: int,
+            page_size: Optional[int] = 150
+    ) -> list[Conversation]:
         """Get conversations by page, sorted by time."""
         args_list = [(page, page_size)]
-        conversations_lists = self._process_for_async(self.__async_get_conversations, args_list)
+        conversations_lists = self._async_helper(self._async_get_conversations, args_list)
         conversations_dict = self._flattening_lists(conversations_lists)
         conversations = [self._convert_dict_to_conversation(c) for c in conversations_dict]
 
         return conversations
-
-    def decrypt_conversation(self, conversation_id: dict) -> dict:
-        """Decrypt conversation by ID."""
-        conversation = self._get(
-            'api',
-            f'mail/v4/conversations/{conversation_id}'
-        ).json()
-        messages = filter(None, (msg.get('Body') for msg in conversation.get('Messages', [])))
-        return {'id': conversation_id, 'data': [self.pgp.decrypt(data) for data in messages]}
 
     def get_conversations_count(self) -> list[dict]:
         """get total count of conversations, count of unread conversations."""
-        response = self._get('mail', 'mail/v4/conversations/count').json()['counts']
+        response = self._get('mail', 'mail/v4/conversations/count').json()['Counts']
         return response
-
-    def read_message(self, _id: str, mark_as_read: bool = True) -> Message:
-        """
-        Read message by ID.
-
-        :param _id: the id of the message you want to read.
-        :type _id: ``str``
-
-        :param mark_as_read: Mark message as read.
-        :type mark_as_read: ``bool``
-        :returns: :py:obj:`Message`
-        """
-        response = self._get('mail', f'mail/v4/messages/{_id}')
-        message = response.json()['Message']
-        message = self._convert_dict_to_message(message)
-
-        message.body = self.pgp.decrypt(message.body)
-
-        parser = Parser()
-        msg = parser.parsestr(message.body)
-        if msg.is_multipart():
-
-            body_text = body_html = None
-            for i in msg.walk():
-                if i.get('Content-Transfer-Encoding') == 'quoted-printable':
-                    body_text = unicodedata.normalize('NFKD', i.get_payload(decode=True).decode())
-                elif i.get_content_type() == 'text/html':
-                    body_html = i.get_payload(decode=True).decode()
-                elif i.get_content_type() == 'image/png':
-                    content = i.get_payload(decode=True)
-                    kwargs = {
-                        'name': i.get_filename(),
-                        'type': i.get_content_type(),
-                        'content': content,
-                        'is_decrypted': True,
-                        'size': len(content),
-                    }
-                    if i.get_content_disposition() == 'inline':
-                        kwargs['is_inserted'] = True
-                        kwargs['cid'] = i.get('Content-ID')[1:-1]
-
-                    message.attachments.append(Attachment(**kwargs))
-
-                elif i.get_content_disposition() == 'attachment':
-                    content = i.get_payload(decode=True)
-                    kwargs = {
-                        'name': i.get_filename(),
-                        'type': i.get_content_type(),
-                        'content': content,
-                        'is_decrypted': True,
-                        'size': len(content),
-                    }
-                    message.attachments.append(Attachment(**kwargs))
-
-            message.body = body_html if body_html else body_text
-
-        if mark_as_read:
-            self.mark_messages_as_read([message])
-
-        return message
 
     def render(self, message: Message) -> None:
         """
@@ -216,7 +192,11 @@ class ProtonMail:
         :type message: ``Message``
         :returns: :py:obj:`None`
         """
-        images_for_download = [img for img in message.attachments if img.is_inserted and not img.is_decrypted]
+        images_for_download = [
+            img
+            for img in message.attachments
+            if img.is_inserted and not img.is_decrypted
+        ]
         self.download_files(images_for_download)
         images = [img for img in message.attachments if img.is_inserted]
 
@@ -235,63 +215,29 @@ class ProtonMail:
         :returns: :py:obj:`list[attachment]`
         """
         args_list = [(attachment, ) for attachment in attachments]
-        results = self._process_for_async(self.__async_download_file, args_list)
-        threads = [Thread(target=self.__decrypt_file, args=result) for result in results]
+        results = self._async_helper(self._async_download_file, args_list)
+        threads = [Thread(target=self._file_decrypt, args=result) for result in results]
         [t.start() for t in threads]
         [t.join() for t in threads]
 
         return attachments
 
-    def download_file(self, attachment: Attachment) -> Attachment:
+    def send_message(self, message: Message) -> Message:
         """
-        Downloads and decrypts the file
+        Send the message.
 
-        :param attachment: file
-        :type attachment: ``attachment``
-        :returns: :py:obj:`attachment`
-        """
-        return self.download_files([attachment])[0]
-
-    def send_message(self, to: str, subject: str, body: str) -> Message:
-        """
-        Sends the message.
-
-        :param to: the address to which the message will be sent.
-        :type to: ``str``
-        :param subject: message subject.
-        :type subject: ``str``
-        :param body: message body, supports html.
-        :type body: ``str``
+        :param message: The message you want to send.
+        :type message: ``Message``
         :returns: :py:obj:`Message`
         """
-        draft = self._create_draft(to, subject, body)
-        message = self._prepare_message(body)
-
-        body_message, session_key = self.pgp.encrypt_with_session_key(message)
-        body_key = b64encode(session_key)
-
-        fields = {
-            f"Packages[multipart/mixed][Addresses][{to}][Type]": (None, '32'),
-            f"Packages[multipart/mixed][Addresses][{to}][Signature]": (None, '1'),
-            "Packages[multipart/mixed][MIMEType]": (None, 'multipart/mixed'),
-            "Packages[multipart/mixed][Body]": ('blob', body_message, 'application/octet-stream'),
-            "Packages[multipart/mixed][Type]": (None, '32'),
-            "Packages[multipart/mixed][BodyKey][Key]": (None, body_key),
-            "Packages[multipart/mixed][BodyKey][Algorithm]": (None, 'aes256'),
-            "DelaySeconds": (None, '10'),
-        }
-
-        params = {
-            'Source': 'composer',
-        }
-
-        boundary = '------WebKitFormBoundary' + ''.join(
-            random.sample(string.ascii_letters + string.digits, 16)
-        )
-        multipart = MultipartEncoder(fields=fields, boundary=boundary)
+        draft = self.create_draft(message, decrypt_body=False)
+        multipart = self._multipart_encrypt(message)
 
         headers = {
             "Content-Type": multipart.content_type
+        }
+        params = {
+            'Source': 'composer',
         }
         response = self._post(
             'mail',
@@ -300,26 +246,24 @@ class ProtonMail:
             params=params,
             data=multipart
         ).json()['Sent']
-        message = self._convert_dict_to_message(response)
+        sent_message = self._convert_dict_to_message(response)
+        sent_message.body = self.pgp.decrypt(sent_message.body)
+        self._multipart_decrypt(sent_message)
 
-        return message
+        return sent_message
 
-    def _create_draft(self, to: str, subject: str, body: str) -> Message:
-        """Create the draft. body: html"""
+    def create_draft(self, message: Message, decrypt_body: Optional[bool] = True) -> Message:
+        """Create the draft."""
 
-        pgp_body = self.pgp.encrypt(body)
 
-        json_data = {
+        pgp_body = self.pgp.encrypt(message.body)
+
+        data = {
             'Message': {
-                'ToList': [
-                    {
-                        'Name': to,
-                        'Address': to,
-                    },
-                ],
+                'ToList': [],
                 'CCList': [],
                 'BCCList': [],
-                'Subject': subject,
+                'Subject': message.subject,
                 'Attachments': [],
                 'MIMEType': 'text/html',
                 'RightToLeft': 0,
@@ -332,40 +276,46 @@ class ProtonMail:
                 'Body': pgp_body,
             },
         }
+        for recipient in message.recipients:
+            data['Message']['ToList'].append(
+                {
+                    'Name': recipient.name,
+                    'Address': recipient.address,
+                }
+            )
 
         response = self._post(
             'mail',
             'mail/v4/messages',
-            json=json_data
+            json=data
         ).json()['Message']
 
         draft = self._convert_dict_to_message(response)
 
+        if decrypt_body:
+            draft.body = self.pgp.decrypt(draft.body)
+            self._multipart_decrypt(draft)
+
         return draft
 
-    def delete_message(self, message: Message) -> None:
-        """Deletes the message."""
-        self.delete_messages([message])
-
-    def delete_messages(self, messages: list[Message]) -> None:
+    def delete_messages(self, messages_or_ids: list[Union[Message, str]]) -> None:
         """Delete messages."""
-        ids = [i.id for i in messages]
-
+        ids = [i.id if isinstance(i, Message) else i for i in messages_or_ids]
         data = {
             "IDs": ids,
         }
-
         self._put('mail', 'mail/v4/messages/delete', json=data)
 
-    def mark_messages_as_read(self, messages: list[Message]) -> None:
+    def mark_messages_as_read(self, messages_or_ids: list[Union[Message, str]]) -> None:
         """
         Mark as read messages.
 
-        :param messages: list of messages.
-        :type messages: :py:obj:`Message`
+        :param messages_or_ids: list of messages or messages id.
+        :type messages_or_ids: :py:obj:`Message`
         """
+        ids = [i.id if isinstance(i, Message) else i for i in messages_or_ids]
         data = {
-            'IDs': [i.id for i in messages],
+            'IDs': ids,
         }
         self._put('mail', 'mail/v4/messages/read', json=data)
 
@@ -447,6 +397,59 @@ class ProtonMail:
             self.session.cookies.set(name, value)
 
     @staticmethod
+    def create_mail_user(**kwargs) -> UserMail:
+        """Create UserMail."""
+        kwargs = deepcopy(kwargs)
+        address = kwargs['address']
+        if not kwargs.get('name'):
+            kwargs['name'] = ''.join(address.split('@')[:-1])
+        return UserMail(**kwargs)
+
+    @staticmethod
+    def create_attachment(**kwargs) -> Attachment:
+        """Create Attachment"""
+        kwargs = deepcopy(kwargs)
+        return Attachment(**kwargs)
+
+    @staticmethod
+    def create_message(**kwargs) -> Message:
+        """Create Message."""
+        kwargs = deepcopy(kwargs)
+        recipients = kwargs.get('recipients', [])
+        recipients = [
+            {'address': recipient}
+            if isinstance(recipient, str)
+            else recipient
+            for recipient in recipients
+        ]
+        kwargs['recipients'] = [
+            ProtonMail.create_mail_user(**i)
+            for i in recipients
+        ]
+        kwargs['attachments'] = [
+            ProtonMail.create_attachment(**i)
+            for i in kwargs.get('attachments', [])
+        ]
+        if kwargs.get('sender'):
+            kwargs['sender'] = ProtonMail.create_mail_user(**kwargs.get('sender'))
+
+        return Message(**kwargs)
+
+    @staticmethod
+    def create_conversation(**kwargs):
+        """Create Conversation"""
+        kwargs = deepcopy(kwargs)
+        kwargs['recipients'] = [
+            ProtonMail.create_mail_user(**i)
+            for i in kwargs.get('recipients', [])
+        ]
+        kwargs['senders'] = [
+            ProtonMail.create_mail_user(**i)
+            for i in kwargs.get('senders', [])
+        ]
+        return Conversation(**kwargs)
+
+    @staticmethod
     def _flattening_lists(list_of_lists: list[list[any]]) -> list[any]:
         flattened_list = [
             item
@@ -464,7 +467,18 @@ class ProtonMail:
         :type response: ``dict``
         :returns: :py:obj:`Message`
         """
-        to = [UserMail(user['Name'], user['Address']) for user in response['ToList']]
+        sender = UserMail(
+            response['Sender']['Name'],
+            response['Sender']['Address'],
+            response['Sender']
+        )
+        recipients = [
+            UserMail(
+                user['Name'],
+                user['Address'],
+                user
+            ) for user in response['ToList']
+        ]
         attachments_dict = response.get('Attachments', [])
         attachments = []
         for attachment in attachments_dict:
@@ -490,8 +504,8 @@ class ProtonMail:
             conversation_id=response['ConversationID'],
             subject=response['Subject'],
             unread=response['Unread'],
-            sender=UserMail(response['Sender']['Name'], response['Sender']['Address']),
-            to=to,
+            sender=sender,
+            recipients=recipients,
             time=response['Time'],
             size=response['Size'],
             body=response.get('Body', ''),
@@ -511,8 +525,20 @@ class ProtonMail:
         :type response: ``dict``
         :returns: :py:obj:`Conversation`
         """
-        senders = [UserMail(user['Name'], user['Address']) for user in response['Senders']]
-        recipients = [UserMail(user['Name'], user['Address']) for user in response['Recipients']]
+        senders = [
+            UserMail(
+                user['Name'],
+                user['Address'],
+                user
+            ) for user in response['Senders']
+        ]
+        recipients = [
+            UserMail(
+                user['Name'],
+                user['Address'],
+                user
+            ) for user in response['Recipients']
+        ]
         conversation = Conversation(
             id=response['ID'],
             subject=response['Subject'],
@@ -552,12 +578,6 @@ class ProtonMail:
         message = msg_mixed.as_string().replace('MIME-Version: 1.0\n', '')
 
         return message
-
-    @staticmethod
-    def __update_attachment_content(attachment, content):
-        attachment.content = content
-        attachment.is_decrypted = True
-        attachment.size = len(content)
 
     def _parse_info_before_login(self, info, password: str) -> tuple[str, str, str]:
         verified = self.pgp.message(info['Modulus'])
@@ -600,7 +620,31 @@ class ProtonMail:
         keys = address['Keys'][0]
         self.pgp.public_key = keys['PublicKey']
 
-    async def __async_get_messages(self, client: ClientSession, page: int, page_size: int = 150) -> list:
+    def _async_helper(self, func: callable, args_list: list[tuple]) -> list[any]:
+        results = asyncio.run(
+            self.__async_process(func, args_list)
+        )
+        return results
+
+    async def __async_process(
+            self,
+            func: callable,
+            args_list: list[tuple[any]]
+    ) -> list[Coroutine]:
+        connector = TCPConnector(limit=100)
+        headers = dict(self.session.headers)
+        cookies = self.session.cookies.get_dict()
+
+        async with ClientSession(headers=headers, cookies=cookies, connector=connector) as client:
+            funcs = (func(client, *args) for args in args_list)
+            return await tqdm_asyncio.gather(*funcs, desc=func.__name__)
+
+    async def _async_get_messages(
+            self,
+            client: ClientSession,
+            page: int,
+            page_size: Optional[int] = 150
+    ) -> list:
         params = {
             "Page": page,
             "PageSize": page_size,
@@ -613,7 +657,11 @@ class ProtonMail:
         messages = await response.json()
         return messages['Messages']
 
-    async def __async_get_conversations(self, client: ClientSession, page: int, page_size: int = 150) -> list:
+    async def _async_get_conversations(
+            self, client: ClientSession,
+            page: int,
+            page_size: Optional[int] = 150
+    ) -> list:
         params = {
             "Page": page,
             "PageSize": page_size,
@@ -627,28 +675,87 @@ class ProtonMail:
         conversations = await response.json()
         return conversations['Conversations']
 
-    def _process_for_async(self, func: callable, args_list: list[tuple]) -> list[any]:
-        results = asyncio.run(
-            self.__async_process(func, args_list)
-        )
-        return results
-
-    async def __async_process(self, func: callable, args_list: list[tuple[any]]) -> list[Coroutine]:
-        connector = TCPConnector(limit=100)
-        headers = dict(self.session.headers)
-        cookies = self.session.cookies.get_dict()
-
-        async with ClientSession(headers=headers, cookies=cookies, connector=connector) as client:
-            funcs = (func(client, *args) for args in args_list)
-            return await tqdm_asyncio.gather(*funcs, desc=func.__name__)
-
-    async def __async_download_file(self, client: ClientSession, image: Attachment) -> tuple[Attachment, bytes]:
+    async def _async_download_file(
+            self, client: ClientSession,
+            image: Attachment
+    ) -> tuple[Attachment, bytes]:
         _id = image.id
         response = await client.get(f"{urls_api['mail']}/mail/v4/attachments/{_id}")
         content = await response.read()
         return image, content
 
-    def __decrypt_file(self, attachment: Attachment, content: bytes) -> None:
+    def _multipart_encrypt(self, message: Message) -> MultipartEncoder:
+        prepared_body = self._prepare_message(message.body)
+        body_message, session_key = self.pgp.encrypt_with_session_key(prepared_body)
+        body_key = b64encode(session_key)
+        fields = {
+            "Packages[multipart/mixed][MIMEType]": (None, 'multipart/mixed'),
+            "Packages[multipart/mixed][Body]": ('blob', body_message, 'application/octet-stream'),
+            "Packages[multipart/mixed][Type]": (None, '32'),
+            "Packages[multipart/mixed][BodyKey][Key]": (None, body_key),
+            "Packages[multipart/mixed][BodyKey][Algorithm]": (None, 'aes256'),
+            "DelaySeconds": (None, '10'),
+        }
+        for recipient in message.recipients:
+            fields[f"Packages[multipart/mixed][Addresses][{recipient.address}][Type]"] = (None, '32')
+            fields[f"Packages[multipart/mixed][Addresses][{recipient.address}][Signature]"] = (None, '1')
+
+        boundary = '------WebKitFormBoundary' + self.__random_string(16)
+        multipart = MultipartEncoder(fields=fields, boundary=boundary)
+
+        return multipart
+
+    def __random_string(self, length: int) -> str:
+        random_string = ''.join(
+            random.sample(string.ascii_letters + string.digits, length)
+        )
+        return random_string
+
+    def _multipart_decrypt(self, message: Message) -> None:
+        """Decrypt multipart/mixed in message."""
+        parser = Parser()
+        multipart = parser.parsestr(message.body)
+        if not multipart.is_multipart():
+            return
+        text = html = None
+        for block in multipart.walk():
+            answers = self.__multipart_decrypt_block(block)
+            if answers[0] == 'text':
+                text = answers[1]
+            elif answers[0] == 'html':
+                html = answers[1]
+            elif answers[0] == 'attachment':
+                message.attachments.append(Attachment(answers[1]))
+        message.body = html or text
+
+    def __multipart_decrypt_block(self, block: any) -> tuple[str, any]:
+        content_type = block.get_content_type()
+        disposition = block.get_content_disposition()
+        transfer = block.get('Content-Transfer-Encoding')
+        payload = block.get_payload(decode=True)
+
+        if content_type == 'image/png' or disposition == 'attachment':
+            return 'attachment', self.__multipart_file_decrypt(payload, block)
+        if transfer == 'quoted-printable':
+            return 'text', unicodedata.normalize('NFKD', payload.decode())
+        if content_type == 'text/html':
+            return 'html', payload.decode()
+        return 'none', 'none'
+
+    def __multipart_file_decrypt(self, payload: any, block: any) -> dict:
+        kwargs = {
+            'name': block.get_filename(),
+            'type': block.get_content_type(),
+            'content': payload,
+            'is_decrypted': True,
+            'size': len(payload),
+        }
+        if block.get_content_disposition() == 'inline':
+            kwargs['is_inserted'] = True
+            kwargs['cid'] = block.get('Content-ID')[1:-1]
+        return kwargs
+
+    def _file_decrypt(self, attachment: Attachment, content: bytes) -> None:
         key_packets = attachment.key_packets
 
         content = self.pgp.message(content).message.ct
@@ -658,6 +765,11 @@ class ProtonMail:
         attachment_bin = self.pgp.message(packet_bytes).message
 
         self.__update_attachment_content(attachment, attachment_bin)
+
+    def __update_attachment_content(self, attachment, content) -> None:
+        attachment.content = content
+        attachment.is_decrypted = True
+        attachment.size = len(content)
 
     def _get(self, base: str, endpoint: str, **kwargs) -> Response:
         return self.__request('get', base, endpoint, **kwargs)
