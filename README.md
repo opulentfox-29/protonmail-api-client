@@ -67,6 +67,9 @@ new_message = proton.create_message(
 
 sent_message = proton.send_message(new_message)
 
+# Wait for new message
+new_message = proton.wait_for_new_message(interval=1, timeout=60, rise_timeout=False)
+
 # Delete messages
 proton.delete_messages([message])
 
@@ -84,4 +87,23 @@ proton.get_all_sessions()
 
 # Revoke all sessions except the current one
 proton.revoke_all_sessions()
+```
+
+### event polling
+Event polling. Polling ends in 3 cases:
+1. Callback returns not `None`.
+2. The callback raises the `SystemExit` exception.
+3. Timeout ends.
+
+For example, wait indefinitely until 2 messages arrive.
+```python
+def callback(response: dict, new_messages: list):
+    messages = response.get('Messages', [])
+    new_messages.extend(messages)
+    if len(new_messages) >= 2:
+        raise SystemExit
+
+new_messages = []
+proton.event_polling(callback, new_messages)
+print(new_messages)
 ```

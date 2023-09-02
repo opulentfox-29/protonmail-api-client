@@ -3,6 +3,7 @@
 import asyncio
 import pickle
 import string
+import time
 from copy import deepcopy
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -318,6 +319,102 @@ class ProtonMail:
             'IDs': ids,
         }
         self._put('mail', 'mail/v4/messages/read', json=data)
+
+    def wait_for_new_message(
+            self,
+            *args,
+            interval: int = 1,
+            timeout: int = 0,
+            rise_timeout: bool = False,
+            **kwargs
+    ) -> Union[Message, None]:
+        """
+        Wait for a new message.
+
+        :param interval: event check interval. default `1`
+        :type interval: `int`
+        :param timeout: maximum polling time in seconds. 0 = infinity. default `infinity`.
+        :type timeout: `int`
+        :param rise_timeout: raise exception on `timeout` completion. default `False`.
+        :type rise_timeout: `bool`
+        :returns :  new message.
+        :rtype: `Message`
+        :raises TimeoutError: at the end of the `timeout` only if the `rise_timeout` is `True`
+        """
+        def func(response: dict):
+            messages = response.get('Messages')
+            if messages:
+                new_message = self._convert_dict_to_message(messages[0]['Message'])
+                return new_message
+            return None
+        message = self.event_polling(
+            func,
+            *args,
+            interval=interval,
+            timeout=timeout,
+            rise_timeout=rise_timeout,
+            **kwargs,
+        )
+        return message
+
+    def event_polling(
+            self,
+            callback: callable,
+            *args: any,
+            interval: int = 1,
+            timeout: int = 0,
+            rise_timeout: bool = False,
+            **kwargs: any
+    ) -> Union[any, None]:
+        """
+        Event polling.
+        Polling ends in 3 cases:
+        1. Callback returns not `None`.
+        2. The callback raises the `SystemExit` exception.
+        3. Timeout ends.
+
+        :param callback: event handling function.
+        :type callback: `function`
+        :param args: positional arguments passed in `callback`
+        :type args: `any`
+        :param interval: event check interval. default `1`
+        :type interval: `int`
+        :param timeout: maximum polling time in seconds. zero equals infinity. default `infinity`.
+        :type timeout: `int`
+        :param rise_timeout: raise exception on `timeout` completion. default `False`.
+        :type rise_timeout: `bool`
+        :param kwargs: named arguments passed in `callback`.
+        :type kwargs: `any`
+        :returns :  the same as the `callback`.
+        :raises TimeoutError: at the end of the `timeout` only if the `rise_timeout` is `True`
+        """
+        response = self._get('mail', 'core/v4/events/latest').json()
+        event_id = response['EventID']
+        if timeout:
+            start_pooling_time = time.time()
+            end_pooling_time = start_pooling_time + timeout
+        else:
+            end_pooling_time = float('inf')
+
+        while time.time() <= end_pooling_time:
+            response = self._get('mail', f'core/v4/events/{event_id}')
+            start_time = time.time()
+            response = response.json()
+            event_id = response.get('EventID', event_id)
+            end_time = start_time + interval
+            try:
+                returned = callback(response, *args, **kwargs)
+                if returned is not None:
+                    return returned
+            except SystemExit:
+                return None
+            need_sleep = end_time - time.time()
+            if need_sleep < 0:
+                continue
+            time.sleep(need_sleep)
+        if rise_timeout:
+            raise TimeoutError
+        return None
 
     def pgp_import(self, private_key: str, passphrase: str) -> None:
         """
