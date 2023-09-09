@@ -240,6 +240,9 @@ class ProtonMail:
         params = {
             'Source': 'composer',
         }
+        for recipient in message.recipients:
+            self.__check_email_address(recipient)
+
         response = self._post(
             'mail',
             f'mail/v4/messages/{draft.id}',
@@ -499,7 +502,7 @@ class ProtonMail:
         kwargs = deepcopy(kwargs)
         address = kwargs['address']
         if not kwargs.get('name'):
-            kwargs['name'] = ''.join(address.split('@')[:-1])
+            kwargs['name'] = address
         return UserMail(**kwargs)
 
     @staticmethod
@@ -717,6 +720,26 @@ class ProtonMail:
         keys = address['Keys'][0]
         self.pgp.public_key = keys['PublicKey']
 
+    def __check_email_address(self, mail_address: Union[UserMail, str]) -> dict:
+        """
+        Checking for the existence of an email address.
+        You cannot send a message to an unchecked address.
+
+        :param mail_address: email address to check.
+        :type mail_address: `UserMail` or `str`
+        :returns: response from the server.
+        :rtype: `dict`
+        """
+        address = mail_address
+        if isinstance(mail_address, UserMail):
+            address = mail_address.address
+        params = {
+            'Email': address,
+        }
+        response = self._get('mail', 'core/v4/keys', params=params)
+        json_response = response.json()
+        return json_response
+
     def _async_helper(self, func: callable, args_list: list[tuple]) -> list[any]:
         results = asyncio.run(
             self.__async_process(func, args_list)
@@ -822,7 +845,7 @@ class ProtonMail:
             elif answers[0] == 'html':
                 html = answers[1]
             elif answers[0] == 'attachment':
-                message.attachments.append(Attachment(answers[1]))
+                message.attachments.append(Attachment(**answers[1]))
         message.body = html or text
 
     def __multipart_decrypt_block(self, block: any) -> tuple[str, any]:
