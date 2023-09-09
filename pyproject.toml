@@ -1,0 +1,32 @@
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[project]
+name = "protonmail-api-client"
+version = "1.2.1"
+description = "This is not an official python ProtonMail API client. it allows you to read, send and delete messages in protonmail, as well as render a ready-made template with embedded images."
+readme = "README.md"
+authors = [{ name = "opulentfox-29", email = "3acqw2bx@duck.com" }]
+license = { file = "LICENSE" }
+keywords = ["protonmail", "api", "client", "proton", "proton-mail", "send", "read", "mail", "email"]
+dependencies = [
+	"aiohttp",
+	"bcrypt",
+	"PGPy",
+	"playwright",
+	"pycryptodome",
+	"requests",
+	"requests-toolbelt",
+	"tqdm"
+]
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+dev = ["twine", "build"]
+
+[project.urls]
+Homepage = "https://github.com/opulentfox-29/protonmail-api-client"
