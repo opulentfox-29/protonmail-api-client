@@ -18,7 +18,7 @@ Go to the [Email encryption keys](https://account.proton.me/u/0/mail/encryption-
 ![1.png](https://raw.githubusercontent.com/opulentfox-29/protonmail-api-client/master/assets/1.png)
 
 ```py
-from protonmail.client import ProtonMail
+from protonmail import ProtonMail
 
 username = "YouAddress@proton.me"
 password = "YourPassword123"
