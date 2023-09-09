@@ -2,4 +2,6 @@
 .idea/
 __pycache__/
 venv/
-protonmail/utils/openpgp.js
+**/openpgp.js
+dist/
+*.egg-info/
