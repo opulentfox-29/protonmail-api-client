@@ -18,7 +18,7 @@ v    Password verifier
 """
 from typing import Union, Optional
 
-from protonmail.constants import SRP_LEN_BYTES, SALT_LEN_BYTES
+from ..constants import SRP_LEN_BYTES, SALT_LEN_BYTES
 from .utils import (
     pm_hash,
     bytes_to_long,
