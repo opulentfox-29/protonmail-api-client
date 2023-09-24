@@ -9,7 +9,7 @@ pip install protonmail-api-client
 ```
 Install Playwright:
 ```
-playwright install
+playwright install webkit
 ```
 
 # Getting Started
