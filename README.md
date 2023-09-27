@@ -71,7 +71,7 @@ sent_message = proton.send_message(new_message)
 new_message = proton.wait_for_new_message(interval=1, timeout=60, rise_timeout=False, read_message=True)
 if 'spam' in new_message.body:
     # Delete spam
-    proton.delete_messages([message])
+    proton.delete_messages([new_message])
 
 # Save session, you do not have to re-enter your login, password, pgp key, passphrase
 # WARNING: the file contains sensitive data, do not share it with anyone,
