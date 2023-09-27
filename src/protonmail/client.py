@@ -329,6 +329,7 @@ class ProtonMail:
             interval: int = 1,
             timeout: int = 0,
             rise_timeout: bool = False,
+            read_message: bool = False,
             **kwargs
     ) -> Union[Message, None]:
         """
@@ -340,6 +341,9 @@ class ProtonMail:
         :type timeout: `int`
         :param rise_timeout: raise exception on `timeout` completion. default `False`.
         :type rise_timeout: `bool`
+        :param read_message: read message if `True` else the message will not be read and the body will be empty.
+                            default `False`.
+        :type read_message: `bool`
         :returns :  new message.
         :rtype: `Message`
         :raises TimeoutError: at the end of the `timeout` only if the `rise_timeout` is `True`
@@ -358,6 +362,9 @@ class ProtonMail:
             rise_timeout=rise_timeout,
             **kwargs,
         )
+        if read_message:
+            message = self.read_message(message)
+
         return message
 
     def event_polling(
