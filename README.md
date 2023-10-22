@@ -80,7 +80,9 @@ proton.save_session('session.pickle')
 
 # Load session
 proton = ProtonMail()
-proton.load_session('session.pickle')
+proton.load_session('session.pickle', auto_save=True)
+# Autosave is needed to save tokens if they are updated
+# (the access token is only valid for 24 hours and will be updated automatically)
 
 # Getting a list of all sessions in which you are authorized
 proton.get_all_sessions()

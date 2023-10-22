@@ -12,7 +12,7 @@ from base64 import b64encode, b64decode
 import random
 from math import ceil
 from threading import Thread
-from typing import Optional, Coroutine, Union
+from typing import Optional, Coroutine, Union, Self
 
 import unicodedata
 from requests import Session
@@ -42,6 +42,8 @@ class ProtonMail:
         self.logger = Logger(logging_level, logging_func)
         self.pgp = PGP()
         self.user = None
+        self._session_path = None
+        self._session_auto_save = False
         self.account_id = ''
         self.account_email = ''
         self.account_name = ''
@@ -69,6 +71,7 @@ class ProtonMail:
             'ClientEphemeral': client_challenge,
             'ClientProof': client_proof,
             'SRPSession': spr_session,
+            'PersistentCookies': 1,
         }).json()
 
         if self._login_process(auth):
@@ -76,7 +79,11 @@ class ProtonMail:
         else:
             self.logger.error("login failure")
 
-        self._parse_info_after_login(auth)
+        self.session.headers['authorization'] = f'{auth["TokenType"]} {auth["AccessToken"]}'
+        self.session.headers['x-pm-uid'] = auth['UID']
+
+        self._get_tokens(auth)
+        self._parse_info_after_login()
 
     def read_message(
             self,
@@ -480,8 +487,18 @@ class ProtonMail:
         with open(path, 'wb') as file:
             pickle.dump(options, file)
 
-    def load_session(self, path: str) -> None:
-        """Loading a previously saved session."""
+    def load_session(self, path: str, auto_save: bool = True) -> None:
+        """
+        Loading a previously saved session.
+
+        :param path: session file path
+        :type path: ``str``
+        :param auto_save: when updating tokens, automatically save changes
+        :type auto_save: ``bool``
+        """
+        self._session_path = path
+        self._session_auto_save = auto_save
+
         with open(path, 'rb') as file:
             options = pickle.load(file)
 
@@ -686,6 +703,22 @@ class ProtonMail:
 
         return message
 
+    @staticmethod
+    def __delete_duplicates_cookies_and_reset_domain(func):
+        def wrapper(self: Self, *args, **kwargs):
+            response = func(self, *args, **kwargs)
+
+            current_cookies: dict = self.session.cookies.get_dict()
+            new_cookies: dict = response.cookies.get_dict()
+            current_cookies.update(new_cookies)  # cookies without duplicates
+
+            self.session.cookies.clear()
+            for name, value in current_cookies.items():
+                self.session.cookies.set(name=name, value=value)  # reset domain
+
+            return response
+        return wrapper
+
     def _parse_info_before_login(self, info, password: str) -> tuple[str, str, str]:
         verified = self.pgp.message(info['Modulus'])
         modulus = b64decode(verified.message)
@@ -710,13 +743,22 @@ class ProtonMail:
 
         return self.user.authenticated()
 
-    def _parse_info_after_login(self, auth: dict) -> None:
-        self.pgp.session_key = self.user.get_session_key()
+    def _get_tokens(self, auth: dict) -> None:
+        json_data = {
+            'UID': auth['UID'],
+            'ResponseType': 'token',
+            'GrantType': 'refresh_token',
+            'RefreshToken': auth['RefreshToken'],
+            'RedirectURI': 'https://protonmail.com',
+            'Persistent': 0,
+            'State': self.__random_string(24),
+        }
+        response = self._post('mail', 'core/v4/auth/cookies', json=json_data)
+        if response.status_code != 200:
+            raise Exception(f"Can't get refresh token, status: {response.status_code}, json: {response.json()}")
 
-        self.session.headers.update({
-            'authorization': f'{auth["TokenType"]} {auth["AccessToken"]}',
-            'x-pm-uid': auth['UID'],
-        })
+    def _parse_info_after_login(self) -> None:
+        self.pgp.session_key = self.user.get_session_key()
 
         address = self.__addresses()['Addresses'][0]
 
@@ -910,6 +952,7 @@ class ProtonMail:
     def _delete(self, base: str, endpoint: str, **kwargs) -> Response:
         return self.__request('delete', base, endpoint, **kwargs)
 
+    @__delete_duplicates_cookies_and_reset_domain
     def __request(self, method: str, base: str, endpoint: str, **kwargs) -> Response:
         methods = {
             'get': self.session.get,
@@ -918,7 +961,17 @@ class ProtonMail:
             'delete': self.session.delete
         }
         response = methods[method](f'{urls_api[base]}/{endpoint}', **kwargs)
+        if response.status_code == 401:  # access token is expired
+            self.__refresh_tokens()
+            response = methods[method](f'{urls_api[base]}/{endpoint}', **kwargs)
         return response
+
+    def __refresh_tokens(self) -> None:
+        response = self._post('mail', 'auth/refresh')
+        if response.status_code != 200:
+            raise Exception(f"Can't update tokens, status: {response.status_code} json: {response.json()}")
+        if self._session_auto_save:
+            self.save_session(self._session_path)
 
     def __addresses(self, params: dict = None) -> dict:
         params = params or {
