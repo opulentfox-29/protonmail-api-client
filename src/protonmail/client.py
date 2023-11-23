@@ -21,6 +21,7 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
+from .exceptions import SendMessageError
 from .models import Attachment, Message, UserMail, Conversation
 from .constants import DEFAULT_HEADERS, urls_api
 from .utils.pysrp import User
@@ -256,8 +257,11 @@ class ProtonMail:
             headers=headers,
             params=params,
             data=multipart
-        ).json()['Sent']
-        sent_message = self._convert_dict_to_message(response)
+        ).json()
+        if response.get('Error'):
+            raise SendMessageError(f"Can't send message: {response['Error']}")
+        sent_message_dict = response['Sent']
+        sent_message = self._convert_dict_to_message(sent_message_dict)
         sent_message.body = self.pgp.decrypt(sent_message.body)
         self._multipart_decrypt(sent_message)
 
@@ -265,8 +269,6 @@ class ProtonMail:
 
     def create_draft(self, message: Message, decrypt_body: Optional[bool] = True) -> Message:
         """Create the draft."""
-
-
         pgp_body = self.pgp.encrypt(message.body)
 
         data = {
