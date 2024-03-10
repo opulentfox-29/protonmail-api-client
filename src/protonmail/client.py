@@ -869,7 +869,7 @@ class ProtonMail:
         }
         for recipient in message.recipients:
             fields[f"Packages[multipart/mixed][Addresses][{recipient.address}][Type]"] = (None, '32')
-            fields[f"Packages[multipart/mixed][Addresses][{recipient.address}][Signature]"] = (None, '1')
+            fields[f"Packages[multipart/mixed][Addresses][{recipient.address}][Signature]"] = (None, '0')
 
         boundary = '------WebKitFormBoundary' + self.__random_string(16)
         multipart = MultipartEncoder(fields=fields, boundary=boundary)
