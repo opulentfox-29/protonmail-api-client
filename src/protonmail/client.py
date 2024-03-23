@@ -21,7 +21,7 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError
+from .exceptions import SendMessageError, InvalidTwoFactorCode
 from .models import Attachment, Message, UserMail, Conversation
 from .constants import DEFAULT_HEADERS, urls_api
 from .utils.pysrp import User
@@ -52,7 +52,7 @@ class ProtonMail:
         self.session = Session()
         self.session.headers.update(DEFAULT_HEADERS)
 
-    def login(self, username: str, password: str) -> None:
+    def login(self, username: str, password: str, getter_2fa_code: callable = lambda: input("enter 2FA code:")) -> None:
         """
         Authorization in ProtonMail.
 
@@ -60,6 +60,8 @@ class ProtonMail:
         :type username: ``str``
         :param password: your password.
         :type password: ``str``
+        :param getter_2fa_code: function to get Two-Factor Authentication(2FA) code. default: input
+        :type getter_2fa_code: ``callable``
         :returns: :py:obj:`None`
         """
         data = {'Username': username}
@@ -82,6 +84,13 @@ class ProtonMail:
 
         self.session.headers['authorization'] = f'{auth["TokenType"]} {auth["AccessToken"]}'
         self.session.headers['x-pm-uid'] = auth['UID']
+
+        if auth["TwoFactor"]:
+            if not auth["2FA"]["TOTP"]:
+                raise NotImplementedError("Two-Factor Authentication(2FA) implemented only TOTP, disable FIDO2/U2F")
+            response_2fa = self._post('mail', 'core/v4/auth/2fa', json={'TwoFactorCode': getter_2fa_code()})
+            if response_2fa.status_code != 200:
+                raise InvalidTwoFactorCode(f"Invalid Two-Factor Authentication(2FA) code: {response_2fa.json()['Error']}")
 
         self._get_tokens(auth)
         self._parse_info_after_login()
