@@ -691,7 +691,8 @@ class ProtonMail:
     @staticmethod
     def _prepare_message(data: str) -> str:
         """Converting an unencrypted message into a multipart mime."""
-        data_base64 = b64encode(data.encode())
+        data_base64 = b64encode(data.encode()).decode()
+        data_base64 = '\n'.join([data_base64[i:i+76] for i in range(0, len(data_base64), 76)])
 
         msg_mixed = MIMEMultipart('mixed')
         msg_alt = MIMEMultipart('alternative')
@@ -703,7 +704,7 @@ class ProtonMail:
         msg_base.set_payload(data_base64, 'utf-8')
 
         msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
-        msg_plain.set_payload('hello', 'utf-8')
+        msg_plain.set_payload('', 'utf-8')
 
         msg_alt.attach(msg_plain)
         msg_related.attach(msg_base)
