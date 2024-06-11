@@ -12,7 +12,8 @@ from base64 import b64encode, b64decode
 import random
 from math import ceil
 from threading import Thread
-from typing import Optional, Coroutine, Union, Self
+from typing import Optional, Coroutine, Union
+from typing_extensions import Self
 
 import unicodedata
 from requests import Session
