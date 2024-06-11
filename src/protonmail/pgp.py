@@ -53,10 +53,12 @@ class PGP:
         with pgp_private_key.unlock(passphrase) as key:
             message = key.decrypt(encrypted_message).message
 
-        # Some messages are encoded in latin _1, so we will recode them in utf-8
+        # Some messages are encoded in latin_1, so we will recode them in utf-8
         try:
+            if not isinstance(message, str):
+                message = message.decode('utf-8')
             message = message.encode('latin_1').decode('utf-8')
-        except UnicodeEncodeError:
+        except (UnicodeEncodeError, UnicodeDecodeError):
             pass
 
         return message
