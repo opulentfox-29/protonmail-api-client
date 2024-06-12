@@ -454,6 +454,7 @@ class ProtonMail:
         Import private pgp key and passphrase.
 
         :param private_key: your private pgp key that you exported from ProtonMail settings.
+                            (by the way, your private key must be primary in order to send messages)
                             example: ``privatekey.YourACC@proton.me-12...99.asc``
         :type private_key: ``str``, ``path``, ``file``
         :param passphrase: the passphrase you created when exporting the private key.
