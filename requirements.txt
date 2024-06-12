@@ -4,4 +4,5 @@ PGPy
 pycryptodome
 requests
 requests-toolbelt
+typing_extensions
 tqdm

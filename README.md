@@ -4,7 +4,6 @@ This is not an official python ProtonMail API client. it allows you to read, sen
 > Congratulations, no need more to execute OpenPGP.js via playwright 🎉🎉🎉
 
 ## Installation
-Install requirements:
 ``` 
 pip install protonmail-api-client
 ```
@@ -15,6 +14,10 @@ Go to the [Email encryption keys](https://account.proton.me/u/0/mail/encryption-
 (by the way, your private key must be primary in order to send messages)
 
 ![1.png](https://raw.githubusercontent.com/opulentfox-29/protonmail-api-client/master/assets/1.png)
+
+> [!WARNING]
+> Messages can only be decrypted using the private key that was primary at the time the messages was received.  
+> for example, if you had one private key and then created another, then old messages can only be decrypted using the old private key, and new messages can only be decrypted with a new private key, if you delete the old private key, you will not be able to decrypt your old messages in any way (including in the web interface)
 
 # Using
 ```py

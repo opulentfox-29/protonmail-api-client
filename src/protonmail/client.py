@@ -840,7 +840,7 @@ class ProtonMail:
             "Sort": "Time",
             "Desc": "1",
         }
-        response = await client.get(f"{urls_api['mail']}/mail/v4/messages", params=params, proxy=self.proxy)
+        response = await client.get(f"{urls_api['mail']}/mail/v4/messages", params=params, proxy=self.proxy, verify_ssl=False)
         messages = await response.json()
         return messages['Messages']
 
@@ -858,7 +858,7 @@ class ProtonMail:
             "Desc": "1",
             # 'Attachments': 1, # only get messages with attachments
         }
-        response = await client.get(f"{urls_api['mail']}/mail/v4/conversations", params=params, proxy=self.proxy)
+        response = await client.get(f"{urls_api['mail']}/mail/v4/conversations", params=params, proxy=self.proxy, verify_ssl=False)
         conversations = await response.json()
         return conversations['Conversations']
 
@@ -867,7 +867,7 @@ class ProtonMail:
             image: Attachment
     ) -> tuple[Attachment, bytes]:
         _id = image.id
-        response = await client.get(f"{urls_api['mail']}/mail/v4/attachments/{_id}", proxy=self.proxy)
+        response = await client.get(f"{urls_api['mail']}/mail/v4/attachments/{_id}", proxy=self.proxy, verify_ssl=False)
         content = await response.read()
         return image, content
 

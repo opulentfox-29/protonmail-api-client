@@ -20,6 +20,7 @@ dependencies = [
 	"pycryptodome",
 	"requests",
 	"requests-toolbelt",
+	"typing_extensions",
 	"tqdm"
 ]
 requires-python = ">=3.9"
