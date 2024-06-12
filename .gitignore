@@ -2,6 +2,5 @@
 .idea/
 __pycache__/
 venv/
-**/openpgp.js
 dist/
 *.egg-info/

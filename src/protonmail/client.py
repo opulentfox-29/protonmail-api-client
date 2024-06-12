@@ -12,7 +12,8 @@ from base64 import b64encode, b64decode
 import random
 from math import ceil
 from threading import Thread
-from typing import Optional, Coroutine, Union, Self
+from typing import Optional, Coroutine, Union
+from typing_extensions import Self
 
 import unicodedata
 from requests import Session
@@ -33,14 +34,17 @@ class ProtonMail:
     """
     Client for api protonmail.
     """
-    def __init__(self, logging_level: Optional[int] = 2, logging_func: Optional[callable] = print):
+    def __init__(self, proxy: Optional[str] = None, logging_level: Optional[int] = 2, logging_func: Optional[callable] = print):
         """
+        :param proxy: proxy for all requests, template: ``http://Username:Password@host-or-ip.com:port``
+        :type proxy: ``str``
         :param logging_level: logging level 1-4 (DEBUG, INFO, WARNING, ERROR), default 2[INFO].
         :type logging_level: ``int``
         :param logging_func: logging function. default print.
         :type logging_func: ``callable``
         """
         self.logger = Logger(logging_level, logging_func)
+        self.proxy = proxy
         self.pgp = PGP()
         self.user = None
         self._session_path = None
@@ -50,6 +54,7 @@ class ProtonMail:
         self.account_name = ''
 
         self.session = Session()
+        self.session.proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else dict()
         self.session.headers.update(DEFAULT_HEADERS)
 
     def login(self, username: str, password: str, getter_2fa_code: callable = lambda: input("enter 2FA code:")) -> None:
@@ -449,6 +454,7 @@ class ProtonMail:
         Import private pgp key and passphrase.
 
         :param private_key: your private pgp key that you exported from ProtonMail settings.
+                            (by the way, your private key must be primary in order to send messages)
                             example: ``privatekey.YourACC@proton.me-12...99.asc``
         :type private_key: ``str``, ``path``, ``file``
         :param passphrase: the passphrase you created when exporting the private key.
@@ -834,7 +840,7 @@ class ProtonMail:
             "Sort": "Time",
             "Desc": "1",
         }
-        response = await client.get(f"{urls_api['mail']}/mail/v4/messages", params=params)
+        response = await client.get(f"{urls_api['mail']}/mail/v4/messages", params=params, proxy=self.proxy, verify_ssl=False)
         messages = await response.json()
         return messages['Messages']
 
@@ -852,7 +858,7 @@ class ProtonMail:
             "Desc": "1",
             # 'Attachments': 1, # only get messages with attachments
         }
-        response = await client.get(f"{urls_api['mail']}/mail/v4/conversations", params=params)
+        response = await client.get(f"{urls_api['mail']}/mail/v4/conversations", params=params, proxy=self.proxy, verify_ssl=False)
         conversations = await response.json()
         return conversations['Conversations']
 
@@ -861,7 +867,7 @@ class ProtonMail:
             image: Attachment
     ) -> tuple[Attachment, bytes]:
         _id = image.id
-        response = await client.get(f"{urls_api['mail']}/mail/v4/attachments/{_id}")
+        response = await client.get(f"{urls_api['mail']}/mail/v4/attachments/{_id}", proxy=self.proxy, verify_ssl=False)
         content = await response.read()
         return image, content
 

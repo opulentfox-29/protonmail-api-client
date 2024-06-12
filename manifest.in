@@ -1,3 +1,2 @@
 recursive-include src/protonmail *
 prune **/__pycache__
-global-exclude openpgp.js

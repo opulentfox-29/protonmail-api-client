@@ -1,22 +1,25 @@
 This is not an official python ProtonMail API client. it allows you to read, send and delete messages in protonmail, as well as render a ready-made template with embedded images.
 
-> Unfortunately, I could not find an analogue of DecryptSessionKeys from OpenPG.js, so this uses Playwright to execute js. if you have any ideas write to me
+> [!NOTE]
+> Congratulations, no need more to execute OpenPGP.js via playwright 🎉🎉🎉
 
 ## Installation
-Install requirements:
 ``` 
 pip install protonmail-api-client
-```
-Install Playwright:
-```
-playwright install webkit
 ```
 
 # Getting Started
 ### Get PGP private key and passphrase
 Go to the [Email encryption keys](https://account.proton.me/u/0/mail/encryption-keys#addresses) section, click on "Export private key" (NOT the Account keys), create the passphrase.
+(by the way, your private key must be primary in order to send messages)
+
 ![1.png](https://raw.githubusercontent.com/opulentfox-29/protonmail-api-client/master/assets/1.png)
 
+> [!WARNING]
+> Messages can only be decrypted using the private key that was primary at the time the messages was received.  
+> for example, if you had one private key and then created another, then old messages can only be decrypted using the old private key, and new messages can only be decrypted with a new private key, if you delete the old private key, you will not be able to decrypt your old messages in any way (including in the web interface)
+
+# Using
 ```py
 from protonmail import ProtonMail
 

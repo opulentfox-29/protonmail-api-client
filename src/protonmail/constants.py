@@ -1,15 +1,9 @@
 """Constants."""
 
-import os
-
-
 PM_APP_VERSION_ACCOUNT = 'web-account@5.0.42.1'
 API_VERSION = '4'
 SRP_LEN_BYTES = 256
 SALT_LEN_BYTES = 10
-current_path = os.path.dirname(os.path.abspath(__file__))
-utils_path = f'{current_path}/utils'
-open_pgp_js_url = "https://unpkg.com/openpgp@5.9.0/dist/openpgp.js"
 
 DEFAULT_HEADERS = {
     'authority': 'account.proton.me',

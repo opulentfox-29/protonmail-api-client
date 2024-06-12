@@ -1,8 +1,8 @@
 aiohttp
 bcrypt
 PGPy
-playwright
 pycryptodome
 requests
 requests-toolbelt
+typing_extensions
 tqdm
