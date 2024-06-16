@@ -13,6 +13,8 @@ import random
 from math import ceil
 from threading import Thread
 from typing import Optional, Coroutine, Union
+
+import bcrypt
 from typing_extensions import Self
 
 import unicodedata
@@ -22,12 +24,13 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError, InvalidTwoFactorCode
-from .models import Attachment, Message, UserMail, Conversation
+from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError
+from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys
 from .constants import DEFAULT_HEADERS, urls_api
 from .utils.pysrp import User
 from .logger import Logger
 from .pgp import PGP
+from .utils.utils import bcrypt_b64_encode
 
 
 class ProtonMail:
@@ -98,7 +101,7 @@ class ProtonMail:
                 raise InvalidTwoFactorCode(f"Invalid Two-Factor Authentication(2FA) code: {response_2fa.json()['Error']}")
 
         self._get_tokens(auth)
-        self._parse_info_after_login()
+        self._parse_info_after_login(password)
 
     def read_message(
             self,
@@ -451,6 +454,8 @@ class ProtonMail:
 
     def pgp_import(self, private_key: str, passphrase: str) -> None:
         """
+        WARNING Deprecated: all keys are automatically get while login, this method will be removed
+
         Import private pgp key and passphrase.
 
         :param private_key: your private pgp key that you exported from ProtonMail settings.
@@ -460,7 +465,7 @@ class ProtonMail:
         :param passphrase: the passphrase you created when exporting the private key.
         :type passphrase: ``str``
         """
-        self.pgp.import_pgp(private_key, passphrase)
+        print("\033[31m{}".format("pgp_import is deprecated and will be removed, you no longer need to use it."))
 
     def get_user_info(self) -> dict:
         """User information."""
@@ -483,9 +488,7 @@ class ProtonMail:
         """
         sliced_aes256_keys = dict(list(self.pgp.aes256_keys.items())[:100])
         pgp = {
-            'public_key': self.pgp.public_key,
-            'private_key': self.pgp.private_key,
-            'passphrase': self.pgp.passphrase,
+            'pairs_keys': [pair.to_dict() for pair in self.pgp.pairs_keys],
             'aes256_keys': sliced_aes256_keys,
         }
         account = {
@@ -519,23 +522,24 @@ class ProtonMail:
         with open(path, 'rb') as file:
             options = pickle.load(file)
 
-        pgp = options['pgp']
-        account = options['account']
-        headers = options['headers']
-        cookies = options['cookies']
+        try:
+            pgp = options['pgp']
+            account = options['account']
+            headers = options['headers']
+            cookies = options['cookies']
 
-        self.pgp.public_key = pgp['public_key']
-        self.pgp.private_key = pgp['private_key']
-        self.pgp.passphrase = pgp['passphrase']
-        self.pgp.aes256_keys = pgp['aes256_keys']
+            self.pgp.pairs_keys = [PgpPairKeys(**pair) for pair in pgp['pairs_keys']]
+            self.pgp.aes256_keys = pgp['aes256_keys']
 
-        self.account_id = account['id']
-        self.account_email = account['email']
-        self.account_name = account['name']
+            self.account_id = account['id']
+            self.account_email = account['email']
+            self.account_name = account['name']
 
-        self.session.headers = headers
-        for name, value in cookies.items():
-            self.session.cookies.set(name, value)
+            self.session.headers = headers
+            for name, value in cookies.items():
+                self.session.cookies.set(name, value)
+        except Exception as exc:
+            raise LoadSessionError(LoadSessionError.__doc__, exc)
 
     @staticmethod
     def create_mail_user(**kwargs) -> UserMail:
@@ -774,9 +778,25 @@ class ProtonMail:
         response = self._post('mail', 'core/v4/auth/cookies', json=json_data)
         if response.status_code != 200:
             raise Exception(f"Can't get refresh token, status: {response.status_code}, json: {response.json()}")
+        self.logger.info("got cookies", "green")
 
-    def _parse_info_after_login(self) -> None:
-        self.pgp.session_key = self.user.get_session_key()
+    def _parse_info_after_login(self, password: str) -> None:
+        user_info = self.__get_users()['User']
+        user_pair_key = user_info['Keys'][0]
+
+        salts = self.__get_salts()['KeySalts']
+        key_salt = [salt['KeySalt'] for salt in salts if salt['KeySalt']][0]
+        bcrypt_salt = bcrypt_b64_encode(b64decode(key_salt))[:22]
+        user_private_key_password = bcrypt.hashpw(password.encode(), b'$2y$10$' + bcrypt_salt)[29:].decode()
+
+        self.pgp.pairs_keys.append(PgpPairKeys(
+            is_user_key=True,
+            is_primary=True,
+            fingerprint_private=user_pair_key['Fingerprint'],
+            private_key=user_pair_key['PrivateKey'],
+            passphrase=user_private_key_password,
+        ))
+        self.logger.info("got user keys", "green")
 
         address = self.__addresses()['Addresses'][0]
 
@@ -784,8 +804,19 @@ class ProtonMail:
         self.account_email = address['Email']
         self.account_name = address['DisplayName']
 
-        keys = address['Keys'][0]
-        self.pgp.public_key = keys['PublicKey']
+        for address_key in address['Keys']:
+            address_passphrase = self.pgp.decrypt(address_key['Token'], user_pair_key['PrivateKey'], user_private_key_password)
+
+            self.pgp.pairs_keys.append(PgpPairKeys(
+                is_user_key=False,
+                is_primary=bool(address_key['Primary']),
+                fingerprint_public=address_key['Fingerprints'][0],
+                fingerprint_private=address_key['Fingerprints'][1],
+                public_key=address_key['PublicKey'],
+                private_key=address_key['PrivateKey'],
+                passphrase=address_passphrase,
+            ))
+        self.logger.info("got email keys", "green")
 
     def __check_email_address(self, mail_address: Union[UserMail, str]) -> dict:
         """
@@ -997,3 +1028,9 @@ class ProtonMail:
             'PageSize': 150,  # max page size
         }
         return self._get('api', 'core/v4/addresses', params=params).json()
+
+    def __get_users(self) -> dict:
+        return self._get('account', 'core/v4/users').json()
+
+    def __get_salts(self) -> dict:
+        return self._get('account', 'core/v4/keys/salts').json()

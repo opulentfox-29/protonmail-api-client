@@ -1,5 +1,6 @@
 """Dataclasses."""
 from dataclasses import dataclass, field, asdict
+from typing import Optional
 
 
 @dataclass
@@ -98,6 +99,29 @@ class Conversation:
         ellipsis_str = '...' if len(self.subject) > 20 else ','
         cropped_subject = self.subject[:20]
         return f"<Conversation [{cropped_subject}{ellipsis_str} id: {self.id[:10]}...]>"
+
+    def to_dict(self) -> dict[str, any]:
+        """
+        Object to dict
+
+        :returns: :py:obj:`dict`
+        """
+        return asdict(self)
+
+@dataclass
+class PgpPairKeys:
+    """PGP pair keys."""
+    is_primary: bool = False
+    is_user_key: bool = False
+    fingerprint_public: Optional[str] = None
+    fingerprint_private: Optional[str] = None
+    public_key: Optional[str] = None
+    private_key: Optional[str] = None
+    passphrase: Optional[str] = None
+
+    def __str__(self):
+        fingerprint = self.fingerprint_private or self.fingerprint_public
+        return f"<PGPKey [{fingerprint or None}, is_primary: {self.is_primary}, is_user_key: {self.is_user_key}]>"
 
     def to_dict(self) -> dict[str, any]:
         """

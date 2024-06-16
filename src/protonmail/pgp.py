@@ -2,46 +2,35 @@
 
 import os
 from base64 import b64decode, b64encode
-from io import IOBase
 from typing import Union, Optional
 
 from Crypto.Cipher import AES
 from pgpy import PGPMessage, PGPKey
+
+from protonmail.exceptions import NoKeysForDecryptThisMessage
+from protonmail.models import PgpPairKeys
 
 
 class PGP:
     """PGP"""
     def __init__(self):
         self.iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
-        self.public_key = str()
-        self.private_key = str()
-        self.passphrase = str()
+        self.pairs_keys: list[PgpPairKeys] = list()
         self.aes256_keys = dict()
-
-    def import_pgp(self, private_key: str, passphrase: str) -> None:
-        """Import pgp private key and passphrase."""
-        self.passphrase = passphrase
-
-        if isinstance(private_key, IOBase):
-            self.private_key = private_key.read()
-
-        elif os.path.isfile(private_key):
-            with open(private_key, 'r', encoding='utf-8') as file:
-                self.private_key = file.read()
-
-        else:
-            self.private_key = private_key
 
     def decrypt(self, data: str, private_key: Optional[str] = None, passphrase: Optional[str] = None) -> str:
         """Decrypt pgp with private key & passphrase."""
-        if not private_key:
-            private_key = self.private_key
-        if not passphrase:
-            passphrase = self.passphrase
-
-        pgp_private_key, _ = self.key(private_key)
         encrypted_message = self.message(data)
 
+        if not private_key:
+            fingerprint = self._get_public_fingerprint_from_message(encrypted_message)
+            pair = self._get_pair_keys(fingerprint=fingerprint)
+            if pair is None:
+                raise NoKeysForDecryptThisMessage(NoKeysForDecryptThisMessage.__doc__, 'you need private key for public key:', fingerprint)
+            private_key = pair.private_key
+            passphrase = pair.passphrase
+
+        pgp_private_key, _ = self.key(private_key)
         with pgp_private_key.unlock(passphrase) as key:
             message = key.decrypt(encrypted_message).message
 
@@ -58,7 +47,7 @@ class PGP:
     def encrypt(self, data: str, public_key: Optional[str] = None) -> str:
         """Encrypt pgp with public key."""
         if not public_key:
-            public_key = self.public_key
+            public_key = self._get_pair_keys(is_primary=True).public_key
 
         public_key, _ = self.key(public_key)
         message = self.create_message(data)
@@ -71,10 +60,12 @@ class PGP:
         if self.aes256_keys.get(encrypted_key):
             return self.aes256_keys[encrypted_key]
 
-        pgp_private_key, _ = self.key(self.private_key)
         encrypted_message = self.message(b64decode(encrypted_key))
+        fingerprint = self._get_public_fingerprint_from_message(encrypted_message)
+        pair_keys = self._get_pair_keys(fingerprint=fingerprint)
+        pgp_private_key, _ = self.key(pair_keys.private_key)
 
-        with pgp_private_key.unlock(self.passphrase) as key:
+        with pgp_private_key.unlock(pair_keys.passphrase) as key:
             subkey = tuple(dict(key.subkeys).values())[0]
             pkesk = encrypted_message._sessionkeys[0]
             alg, aes256_key = pkesk.decrypt_sk(subkey._key)
@@ -88,11 +79,12 @@ class PGP:
 
         pgp_message = self.create_message(message)
 
-        pgp_private_key, _ = self.key(self.private_key)
-        with pgp_private_key.unlock(self.passphrase) as key:
+        pair_keys = self._get_pair_keys(is_primary=True)
+        pgp_private_key, _ = self.key(pair_keys.private_key)
+        with pgp_private_key.unlock(pair_keys.passphrase) as key:
             pgp_message |= key.sign(pgp_message)
 
-        encrypted_message = pgp_message.encrypt(self.passphrase, session_key)
+        encrypted_message = pgp_message.encrypt(pair_keys.passphrase, session_key)
 
         lines_encrypted_message_pgp = str(encrypted_message).split('\n')
         del lines_encrypted_message_pgp[2]  # delete information from PGPy (OpenPGP.js doesn't have it), ProtonMail doesn't work with it
@@ -134,3 +126,20 @@ class PGP:
     def key(blob: any) -> PGPKey:
         """Load pgp key from blob."""
         return PGPKey.from_blob(blob)
+
+    def _get_pair_keys(self, fingerprint: Optional[str] = None, is_primary: Optional[bool] = None, is_user_key: bool = False) -> Optional[PgpPairKeys]:
+        for pair in self.pairs_keys:
+            if is_primary is not None and is_primary != pair.is_primary:
+                continue
+            if pair.is_user_key != is_user_key:
+                continue
+            fingerprint_public = pair.fingerprint_public or str()
+            fingerprint_private = pair.fingerprint_private or str()
+            if fingerprint is not None and fingerprint[-16:].upper() not in (fingerprint_public[-16:].upper(), fingerprint_private[-16:].upper()):
+                continue
+            return pair
+        return None
+
+    def _get_public_fingerprint_from_message(self, message: PGPMessage) -> str:
+        fingerprint = list(message.issuers)[0]
+        return fingerprint

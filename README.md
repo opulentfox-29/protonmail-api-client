@@ -8,18 +8,7 @@ This is not an official python ProtonMail API client. it allows you to read, sen
 pip install protonmail-api-client
 ```
 
-# Getting Started
-### Get PGP private key and passphrase
-Go to the [Email encryption keys](https://account.proton.me/u/0/mail/encryption-keys#addresses) section, click on "Export private key" (NOT the Account keys), create the passphrase.
-(by the way, your private key must be primary in order to send messages)
-
-![1.png](https://raw.githubusercontent.com/opulentfox-29/protonmail-api-client/master/assets/1.png)
-
-> [!WARNING]
-> Messages can only be decrypted using the private key that was primary at the time the messages was received.  
-> for example, if you had one private key and then created another, then old messages can only be decrypted using the old private key, and new messages can only be decrypted with a new private key, if you delete the old private key, you will not be able to decrypt your old messages in any way (including in the web interface)
-
-# Using
+## Using
 ```py
 from protonmail import ProtonMail
 
@@ -28,10 +17,6 @@ password = "YourPassword123"
 
 proton = ProtonMail()
 proton.login(username, password)
-
-private_key = 'privatekey.YourAddress@proton.me-123...89.asc'
-passphrase = 'YourPassphrase'
-proton.pgp_import(private_key, passphrase=passphrase)
 
 # Get a list of all messages
 messages = proton.get_messages()
