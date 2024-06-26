@@ -24,7 +24,7 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError
+from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound
 from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys
 from .constants import DEFAULT_HEADERS, urls_api
 from .utils.pysrp import User
@@ -848,6 +848,8 @@ class ProtonMail:
         }
         response = self._get('mail', 'core/v4/keys', params=params)
         json_response = response.json()
+        if json_response['Code'] == 33102:
+            raise AddressNotFound(address, json_response['Error'])
         return json_response
 
     def _async_helper(self, func: callable, args_list: list[tuple]) -> list[any]:
