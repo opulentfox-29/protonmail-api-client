@@ -248,16 +248,18 @@ class ProtonMail:
 
         return attachments
 
-    def send_message(self, message: Message) -> Message:
+    def send_message(self, message: Message, is_html: bool = True) -> Message:
         """
         Send the message.
 
         :param message: The message you want to send.
         :type message: ``Message``
+        :param is_html: message.body is html or plain text, default: True
+        :type is_html: ``bool``
         :returns: :py:obj:`Message`
         """
         draft = self.create_draft(message, decrypt_body=False)
-        multipart = self._multipart_encrypt(message)
+        multipart = self._multipart_encrypt(message, is_html)
 
         headers = {
             "Content-Type": multipart.content_type
@@ -699,25 +701,35 @@ class ProtonMail:
         return conversation
 
     @staticmethod
-    def _prepare_message(data: str) -> str:
+    def _prepare_message(data: str, is_html: bool = True) -> str:
         """Converting an unencrypted message into a multipart mime."""
+        msg_mixed = MIMEMultipart('mixed')
+
+        msg_plain = MIMEText('', _subtype='plain')
+        msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
+
+        if not is_html:
+            data = '=\n'.join([data[i:i + 76] for i in range(0, len(data), 76)])
+            msg_plain.set_payload(data, 'utf-8')
+
+            msg_mixed.attach(msg_plain)
+            message = msg_mixed.as_string().replace('MIME-Version: 1.0\n', '')
+            return message
+
+        msg_plain.set_payload('', 'utf-8')
+
         data_base64 = b64encode(data.encode()).decode()
         data_base64 = '\n'.join([data_base64[i:i+76] for i in range(0, len(data_base64), 76)])
 
-        msg_mixed = MIMEMultipart('mixed')
-        msg_alt = MIMEMultipart('alternative')
-        msg_plain = MIMEText('', _subtype='plain')
-        msg_related = MIMEMultipart('related')
         msg_base = MIMEText('', _subtype='html')
-
         msg_base.replace_header('Content-Transfer-Encoding', 'base64')
         msg_base.set_payload(data_base64, 'utf-8')
 
-        msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
-        msg_plain.set_payload('', 'utf-8')
-
-        msg_alt.attach(msg_plain)
+        msg_related = MIMEMultipart('related')
         msg_related.attach(msg_base)
+
+        msg_alt = MIMEMultipart('alternative')
+        msg_alt.attach(msg_plain)
         msg_alt.attach(msg_related)
 
         msg_mixed.attach(msg_alt)
@@ -902,8 +914,8 @@ class ProtonMail:
         content = await response.read()
         return image, content
 
-    def _multipart_encrypt(self, message: Message) -> MultipartEncoder:
-        prepared_body = self._prepare_message(message.body)
+    def _multipart_encrypt(self, message: Message, is_html: bool) -> MultipartEncoder:
+        prepared_body = self._prepare_message(message.body, is_html)
         body_message, session_key = self.pgp.encrypt_with_session_key(prepared_body)
         body_key = b64encode(session_key)
         fields = {
