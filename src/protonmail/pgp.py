@@ -72,6 +72,19 @@ class PGP:
 
         return aes256_key
 
+    def encrypt_session_key(self, session_key: bytes, public_key: Optional[Union[str, PGPKey]] = None) -> bytes:
+        """Encrypt session key."""
+        if not public_key:
+            public_key = self._get_pair_keys(is_primary=True).public_key
+        if isinstance(public_key, str):
+            public_key, _ = self.key(public_key)
+
+        message = self.create_message('message for encrypt')
+        encrypted_message = public_key.encrypt(message, sessionkey=session_key)
+        encrypted_session_key = bytes(encrypted_message._sessionkeys[0])
+
+        return encrypted_session_key
+
     def encrypt_with_session_key(self, message: str, session_key: Optional[bytes] = None) -> tuple[bytes, bytes]:
         """Encrypt message with session key"""
         if not session_key:

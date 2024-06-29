@@ -43,7 +43,7 @@ with open(f'{first_file.name}', 'wb') as f:
     f.write(first_file.content)
 
 # Send message
-recipients = ["to@gmail.com", "to2@gmail.com"]  # You can’t send to @proton.me/@protonmail.com yet
+recipients = ["to1@proton.me", "to2@gmail.com"]
 subject = "My first message"
 body = "<html><body>hello, i sent my first mail!</body></html>"  # html or just text
 

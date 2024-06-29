@@ -258,8 +258,16 @@ class ProtonMail:
         :type is_html: ``bool``
         :returns: :py:obj:`Message`
         """
+        recipients_info = []
+        for recipient in message.recipients:
+            recipient_info = self.__check_email_address(recipient)
+            recipients_info.append({
+                'address': recipient.address,
+                'type': 1 if recipient_info['RecipientType'] == 1 else 32,
+                'public_key': recipient_info['Keys'][0]['PublicKey'] if recipient_info['Keys'] else None,
+            })
         draft = self.create_draft(message, decrypt_body=False)
-        multipart = self._multipart_encrypt(message, is_html)
+        multipart = self._multipart_encrypt(message, recipients_info, is_html)
 
         headers = {
             "Content-Type": multipart.content_type
@@ -267,8 +275,6 @@ class ProtonMail:
         params = {
             'Source': 'composer',
         }
-        for recipient in message.recipients:
-            self.__check_email_address(recipient)
 
         response = self._post(
             'mail',
@@ -916,21 +922,49 @@ class ProtonMail:
         content = await response.read()
         return image, content
 
-    def _multipart_encrypt(self, message: Message, is_html: bool) -> MultipartEncoder:
-        prepared_body = self._prepare_message(message.body, is_html)
-        body_message, session_key = self.pgp.encrypt_with_session_key(prepared_body)
-        body_key = b64encode(session_key)
+    def _multipart_encrypt(self, message: Message, recipients_info: list[dict], is_html: bool) -> MultipartEncoder:
+        session_key = None
+        recipients_type = set(recipient['type'] for recipient in recipients_info)
+        package_types = {
+            1: 'text/html' if is_html else 'text/plain',  # send to proton
+            32: 'multipart/mixed',  # send to other mails
+        }
         fields = {
-            "Packages[multipart/mixed][MIMEType]": (None, 'multipart/mixed'),
-            "Packages[multipart/mixed][Body]": ('blob', body_message, 'application/octet-stream'),
-            "Packages[multipart/mixed][Type]": (None, '32'),
-            "Packages[multipart/mixed][BodyKey][Key]": (None, body_key),
-            "Packages[multipart/mixed][BodyKey][Algorithm]": (None, 'aes256'),
             "DelaySeconds": (None, '10'),
         }
-        for recipient in message.recipients:
-            fields[f"Packages[multipart/mixed][Addresses][{recipient.address}][Type]"] = (None, '32')
-            fields[f"Packages[multipart/mixed][Addresses][{recipient.address}][Signature]"] = (None, '0')
+
+        for recipient_type in recipients_type:
+            is_send_to_proton = recipient_type == 1
+
+            if is_send_to_proton:
+                prepared_body = message.body
+            else:
+                prepared_body = self._prepare_message(message.body, is_html)
+
+            body_message, session_key = self.pgp.encrypt_with_session_key(prepared_body, session_key)
+
+            package_type = package_types[recipient_type]
+            fields.update({
+                f"Packages[{package_type}][MIMEType]": (None, package_type),
+                f"Packages[{package_type}][Body]": ('blob', body_message, 'application/octet-stream'),
+                f"Packages[{package_type}][Type]": (None, str(recipient_type)),
+            })
+            if not is_send_to_proton:
+                fields.update({
+                    "Packages[package_type][BodyKey][Key]": (None, b64encode(session_key)),
+                    "Packages[package_type][BodyKey][Algorithm]": (None, 'aes256'),
+                })
+
+        for recipient in recipients_info:
+            package_type = package_types[recipient['type']]
+            address = recipient['address']
+            fields.update({
+                f"Packages[{package_type}][Addresses][{address}][Type]": (None, str(recipient['type'])),
+                f"Packages[{package_type}][Addresses][{address}][Signature]": (None, '0'),
+            })
+            if recipient['public_key']:  # proton
+                key_packet = b64encode(self.pgp.encrypt_session_key(session_key, recipient['public_key'])).decode()
+                fields[f"Packages[{package_type}][Addresses][{address}][BodyKeyPacket]"] = (None, key_packet)
 
         boundary = '------WebKitFormBoundary' + self.__random_string(16)
         multipart = MultipartEncoder(fields=fields, boundary=boundary)
