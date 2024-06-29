@@ -19,3 +19,7 @@ class NoKeysForDecryptThisMessage(Exception):
 
 class LoadSessionError(Exception):
     """Error while load session, maybe this session file was created in other version? then re-login"""
+
+
+class AddressNotFound(Exception):
+    """Email address was not found"""
