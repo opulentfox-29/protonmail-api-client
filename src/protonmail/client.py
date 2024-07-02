@@ -951,8 +951,8 @@ class ProtonMail:
             })
             if not is_send_to_proton:
                 fields.update({
-                    "Packages[package_type][BodyKey][Key]": (None, b64encode(session_key)),
-                    "Packages[package_type][BodyKey][Algorithm]": (None, 'aes256'),
+                    f"Packages[{package_type}][BodyKey][Key]": (None, b64encode(session_key)),
+                    f"Packages[{package_type}][BodyKey][Algorithm]": (None, 'aes256'),
                 })
 
         for recipient in recipients_info:
