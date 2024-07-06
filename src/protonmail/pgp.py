@@ -1,6 +1,7 @@
 """PGP."""
 
 import os
+import warnings
 from base64 import b64decode, b64encode
 from typing import Union, Optional
 
@@ -9,6 +10,9 @@ from pgpy import PGPMessage, PGPKey
 
 from protonmail.exceptions import NoKeysForDecryptThisMessage
 from protonmail.models import PgpPairKeys
+
+
+warnings.filterwarnings("ignore", module="pgpy")  # ignore deprecation warnings for pgpy
 
 
 class PGP:
