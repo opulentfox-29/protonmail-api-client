@@ -1,12 +1,14 @@
 """Client for api protonmail."""
 
 import asyncio
+import mimetypes
 import pickle
 import string
 import time
 from copy import deepcopy
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
 from email.parser import Parser
 from base64 import b64encode, b64decode
 import random
@@ -24,7 +26,7 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound
+from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment
 from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys
 from .constants import DEFAULT_HEADERS, urls_api
 from .utils.pysrp import User
@@ -267,7 +269,8 @@ class ProtonMail:
                 'public_key': recipient_info['Keys'][0]['PublicKey'] if recipient_info['Keys'] else None,
             })
         draft = self.create_draft(message, decrypt_body=False)
-        multipart = self._multipart_encrypt(message, recipients_info, is_html)
+        uploaded_attachments = self._upload_attachments(message.attachments, draft.id)
+        multipart = self._multipart_encrypt(message, uploaded_attachments, recipients_info, is_html)
 
         headers = {
             "Content-Type": multipart.content_type
@@ -559,10 +562,29 @@ class ProtonMail:
         return UserMail(**kwargs)
 
     @staticmethod
-    def create_attachment(**kwargs) -> Attachment:
-        """Create Attachment"""
-        kwargs = deepcopy(kwargs)
-        return Attachment(**kwargs)
+    def create_attachment(content: bytes, name: str, mime_type: Optional[str] = None) -> Attachment:
+        """
+        Create Attachment.
+
+        :param content: attachment content.
+        :param name: filename including an extension. (extension is needed for automatic MIME type detection)
+        :param mime_type: Optional. MIME type, it is necessary for mail to be able to display the file correctly.
+                            for example, if you have a text file with an unusual extension, such as `pyproject.toml`,
+                            you can specify mime_type='text/plain' and mail will treat it as a text file.
+                            more: https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types
+        :returns: :py:obj:`Attachment`
+        """
+        if not mime_type:
+            mime_type, encoding = mimetypes.guess_type(name)
+        if not mime_type:
+            mime_type = 'application/octet-stream'
+        attachment = Attachment(
+            content=content,
+            name=name,
+            type=mime_type,
+            is_decrypted=True,
+        )
+        return attachment
 
     @staticmethod
     def create_message(**kwargs) -> Message:
@@ -578,10 +600,6 @@ class ProtonMail:
         kwargs['recipients'] = [
             ProtonMail.create_mail_user(**i)
             for i in recipients
-        ]
-        kwargs['attachments'] = [
-            ProtonMail.create_attachment(**i)
-            for i in kwargs.get('attachments', [])
         ]
         if kwargs.get('sender'):
             kwargs['sender'] = ProtonMail.create_mail_user(**kwargs.get('sender'))
@@ -635,22 +653,7 @@ class ProtonMail:
         attachments_dict = response.get('Attachments', [])
         attachments = []
         for attachment in attachments_dict:
-            is_inserted = attachment['Disposition'] == 'inline'
-            cid = attachment['Headers'].get('content-id')
-            if cid:
-                cid = cid[1:-1]
-            attachments.append(
-                Attachment(
-                    id=attachment['ID'],
-                    name=attachment['Name'],
-                    size=attachment['Size'],
-                    type=attachment['MIMEType'],
-                    is_inserted=is_inserted,
-                    key_packets=attachment['KeyPackets'],
-                    cid=cid,
-                    extra=attachment
-                )
-            )
+            attachments.append(ProtonMail._convert_dict_to_attachment(attachment))
 
         message = Message(
             id=response['ID'],
@@ -668,6 +671,31 @@ class ProtonMail:
             extra=response,
         )
         return message
+
+    @staticmethod
+    def _convert_dict_to_attachment(attachment_data: dict) -> Attachment:
+        """
+        Converts dictionary to attachment object.
+
+        :param attachment_data: The dictionary from which the attachment will be created.
+        :type attachment_data: ``dict``
+        :returns: :py:obj:`Attachment`
+        """
+        is_inserted = attachment_data['Disposition'] == 'inline'
+        cid = attachment_data['Headers'].get('content-id')
+        if cid:
+            cid = cid[1:-1]
+        attachment = Attachment(
+            id=attachment_data['ID'],
+            name=attachment_data['Name'],
+            size=attachment_data['Size'],
+            type=attachment_data['MIMEType'],
+            is_inserted=is_inserted,
+            key_packets=attachment_data['KeyPackets'],
+            cid=cid,
+            extra=attachment_data
+        )
+        return attachment
 
     @staticmethod
     def _convert_dict_to_conversation(response: dict) -> Conversation:
@@ -707,8 +735,9 @@ class ProtonMail:
         return conversation
 
     @staticmethod
-    def _prepare_message(data: str, is_html: bool = True) -> str:
+    def _prepare_message(message: Message, is_html: bool = True) -> str:
         """Converting an unencrypted message into a multipart mime."""
+        data = message.body
         msg_mixed = MIMEMultipart('mixed')
 
         msg_plain = MIMEText('', _subtype='plain')
@@ -739,6 +768,19 @@ class ProtonMail:
         msg_alt.attach(msg_related)
 
         msg_mixed.attach(msg_alt)
+
+        for attachment in message.attachments:
+            main_type, sub_type = attachment.type.split('/')
+            filename_part = f'; filename="{attachment.name}"; name="{attachment.name}"'
+
+            msg_attachment = MIMEBase(main_type, sub_type + filename_part)
+            content_type = 'inline' if attachment.is_inserted else 'attachment'
+            msg_attachment.add_header('Content-Disposition', content_type + filename_part)
+            if attachment.is_inserted:
+                msg_attachment.add_header('Content-ID', f'<{attachment.cid}>')
+            msg_attachment.set_payload(attachment.content, 'utf-8')
+            msg_mixed.attach(msg_attachment)
+
         message = msg_mixed.as_string().replace('MIME-Version: 1.0\n', '')
 
         return message
@@ -922,7 +964,48 @@ class ProtonMail:
         content = await response.read()
         return image, content
 
-    def _multipart_encrypt(self, message: Message, recipients_info: list[dict], is_html: bool) -> MultipartEncoder:
+    def _upload_attachments(self, attachments: list[Attachment], draft_id: str) -> list[Attachment]:
+        """upload attachments."""
+        encrypted_attachments_with_signature = [self._encrypt_attachment(attachment) for attachment in attachments]
+
+        uploaded_attachments = list()
+        for attachment, signature in encrypted_attachments_with_signature:
+            fields = {
+                'Filename': (None, attachment.name),
+                'MessageID': (None, draft_id),
+                'ContentID': (None, attachment.cid),
+                'MIMEType': (None, attachment.type),
+                'KeyPackets': ('blob', b64decode(attachment.key_packets), 'application/octet-stream'),
+                'DataPacket': ('blob', attachment.content, 'application/octet-stream'),
+                'Signature': ('blob', signature, 'application/octet-stream'),
+            }
+            boundary = '------WebKitFormBoundary' + self.__random_string(16)
+            multipart = MultipartEncoder(fields=fields, boundary=boundary)
+            headers = {
+                'Content-Type': multipart.content_type,
+            }
+            response = self._post('mail', 'mail/v4/attachments', headers=headers, data=multipart)
+            response_data = response.json()
+            if response_data['Code'] != 1000:
+                raise CantUploadAttachment(response_data['Error'])
+            uploaded_attachment = self._convert_dict_to_attachment(response_data['Attachment'])
+            uploaded_attachments.append(uploaded_attachment)
+
+        return uploaded_attachments
+
+    def _encrypt_attachment(self, attachment: Attachment) -> tuple[Attachment, bytes]:
+        """Encrypt an attachment."""
+        encrypted_data, session_key, signature = self.pgp.encrypt_with_session_key(attachment.content)
+        key_packet = b64encode(self.pgp.encrypt_session_key(session_key)).decode()
+
+        encrypted_attachment = Attachment(**attachment.to_dict())
+        encrypted_attachment.content = encrypted_data
+        encrypted_attachment.is_decrypted = False
+        encrypted_attachment.key_packets = key_packet
+
+        return encrypted_attachment, signature
+
+    def _multipart_encrypt(self, message: Message, uploaded_attachments: list[Attachment], recipients_info: list[dict], is_html: bool) -> MultipartEncoder:
         session_key = None
         recipients_type = set(recipient['type'] for recipient in recipients_info)
         package_types = {
@@ -939,9 +1022,9 @@ class ProtonMail:
             if is_send_to_proton:
                 prepared_body = message.body
             else:
-                prepared_body = self._prepare_message(message.body, is_html)
+                prepared_body = self._prepare_message(message, is_html)
 
-            body_message, session_key = self.pgp.encrypt_with_session_key(prepared_body, session_key)
+            body_message, session_key, signature = self.pgp.encrypt_with_session_key(prepared_body, session_key)
 
             package_type = package_types[recipient_type]
             fields.update({
@@ -965,6 +1048,10 @@ class ProtonMail:
             if recipient['public_key']:  # proton
                 key_packet = b64encode(self.pgp.encrypt_session_key(session_key, recipient['public_key'])).decode()
                 fields[f"Packages[{package_type}][Addresses][{address}][BodyKeyPacket]"] = (None, key_packet)
+                for attachment in uploaded_attachments:
+                    session_key_attachment = self.pgp.decrypt_session_key(attachment.key_packets)
+                    key_packet_attachment = b64encode(self.pgp.encrypt_session_key(session_key_attachment, recipient['public_key'])).decode()
+                    fields[f"Packages[{package_type}][Addresses][{address}][AttachmentKeyPackets][{attachment.id}]"] = (None, key_packet_attachment)
 
         boundary = '------WebKitFormBoundary' + self.__random_string(16)
         multipart = MultipartEncoder(fields=fields, boundary=boundary)

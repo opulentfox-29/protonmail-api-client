@@ -1,6 +1,7 @@
 """PGP."""
 
 import os
+import warnings
 from base64 import b64decode, b64encode
 from typing import Union, Optional
 
@@ -9,6 +10,9 @@ from pgpy import PGPMessage, PGPKey
 
 from protonmail.exceptions import NoKeysForDecryptThisMessage
 from protonmail.models import PgpPairKeys
+
+
+warnings.filterwarnings("ignore", module="pgpy")  # ignore deprecation warnings for pgpy
 
 
 class PGP:
@@ -85,7 +89,7 @@ class PGP:
 
         return encrypted_session_key
 
-    def encrypt_with_session_key(self, message: str, session_key: Optional[bytes] = None) -> tuple[bytes, bytes]:
+    def encrypt_with_session_key(self, message: str, session_key: Optional[bytes] = None) -> tuple[bytes, bytes, bytes]:
         """Encrypt message with session key"""
         if not session_key:
             session_key = os.urandom(32)
@@ -96,6 +100,7 @@ class PGP:
         pgp_private_key, _ = self.key(pair_keys.private_key)
         with pgp_private_key.unlock(pair_keys.passphrase) as key:
             pgp_message |= key.sign(pgp_message)
+        signature = bytes(pgp_message.signatures[0])
 
         encrypted_message = pgp_message.encrypt(pair_keys.passphrase, session_key)
 
@@ -104,7 +109,7 @@ class PGP:
         encrypted_message_pgp = '\n'.join(lines_encrypted_message_pgp)
         encrypted_message = self.message(encrypted_message_pgp)
 
-        return bytes(encrypted_message), session_key
+        return bytes(encrypted_message), session_key, signature
 
     def aes256_decrypt(self, data: bytes, key: bytes) -> Union[bytes, int]:
         """Decrypt AES256."""

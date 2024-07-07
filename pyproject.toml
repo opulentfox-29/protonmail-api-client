@@ -7,12 +7,12 @@ include-package-data = true
 
 [project]
 name = "protonmail-api-client"
-version = "1.5.1"
+version = "1.6.0"
 description = "This is not an official python ProtonMail API client. it allows you to read, send and delete messages in protonmail, as well as render a ready-made template with embedded images."
 readme = "README.md"
 authors = [{ name = "opulentfox-29", email = "3acqw2bx@duck.com" }]
 license = { file = "LICENSE" }
-keywords = ["protonmail", "api", "client", "proton", "proton-mail", "send", "read", "mail", "email"]
+keywords = ["protonmail", "api", "client", "proton", "proton-mail", "send", "read", "mail", "email", "python", "python3"]
 dependencies = [
 	"aiohttp",
 	"bcrypt",
