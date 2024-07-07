@@ -23,3 +23,7 @@ class LoadSessionError(Exception):
 
 class AddressNotFound(Exception):
     """Email address was not found"""
+
+
+class CantUploadAttachment(Exception):
+    """Error when try to upload attachment"""

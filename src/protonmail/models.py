@@ -1,6 +1,7 @@
 """Dataclasses."""
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+from uuid import uuid4
 
 
 @dataclass
@@ -48,6 +49,17 @@ class Attachment:
         :returns: :py:obj:`dict`
         """
         return asdict(self)
+
+    def get_embedded_attrs(self) -> str:
+        """
+        Get embedded attributes for insert image into HTML.
+        For example: <img {img_attachment.get_embedded_attrs()} height="150" width="300">
+        """
+        if not self.cid:
+            self.cid = str(uuid4()).split('-', maxsplit=1)[0] + '@proton.me'
+        embedded_attrs = f'src="cid:{self.cid}" alt="{self.name}" class="proton-embedded"'
+        self.is_inserted = True
+        return embedded_attrs
 
 
 @dataclass

@@ -42,15 +42,32 @@ proton.download_files([first_file])
 with open(f'{first_file.name}', 'wb') as f:
     f.write(first_file.content)
 
-# Send message
-recipients = ["to1@proton.me", "to2@gmail.com"]
-subject = "My first message"
-body = "<html><body>hello, i sent my first mail!</body></html>"  # html or just text
+# Create attachments
+with open('image.png', 'rb') as f:
+    img = f.read()
+with open('resume.pdf', 'rb') as f:
+    pdf = f.read()
 
+img_attachment = proton.create_attachment(content=img, name='image.png')
+pdf_attachment = proton.create_attachment(content=pdf, name='resume.pdf')
+
+html = f"""
+<html>
+    <body>
+        <h2>Hi, I'm a python developer, here's my photo:</h2>
+        <img {img_attachment.get_embedded_attrs()} height="150" width="300">
+        <br/>
+        Look at my resume, it is attached to the letter.
+    </body>
+</html>
+"""
+
+# Send message
 new_message = proton.create_message(
-    recipients=recipients,
-    subject=subject,
-    body=body
+    recipients=["to1@proton.me", "to2@gmail.com"],
+    subject="My first message",
+    body=html,  # html or just text
+    attachments=[img_attachment, pdf_attachment],
 )
 
 sent_message = proton.send_message(new_message)
