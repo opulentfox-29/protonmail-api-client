@@ -386,9 +386,11 @@ class ProtonMail:
         :raises TimeoutError: at the end of the `timeout` only if the `rise_timeout` is `True`
         """
         def func(response: dict):
-            messages = response.get('Messages')
-            if messages:
-                new_message = self._convert_dict_to_message(messages[0]['Message'])
+            messages = response.get('Messages', [])
+            for message in messages:
+                if message.get('Action') != 1:  # new message
+                    continue
+                new_message = self._convert_dict_to_message(message['Message'])
                 return new_message
             return None
         message = self.event_polling(
