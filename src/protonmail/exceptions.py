@@ -27,3 +27,13 @@ class AddressNotFound(Exception):
 
 class CantUploadAttachment(Exception):
     """Error when try to upload attachment"""
+
+
+class CantGetLabels(Exception):
+    """Error when try to get labels"""
+
+class CantSetLabel(Exception):
+    """Error when try to set label for a message"""
+
+class CantUnsetLabel(Exception):
+    """Error when try to unset label for a message"""

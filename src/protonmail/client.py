@@ -26,8 +26,8 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment
-from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys
+from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels
+from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label
 from .constants import DEFAULT_HEADERS, urls_api
 from .utils.pysrp import User
 from .logger import Logger
@@ -133,16 +133,17 @@ class ProtonMail:
 
         return message
 
-    def get_messages(self, page_size: Optional[int] = 150) -> list[Message]:
+    def get_messages(self, page_size: Optional[int] = 150, label_or_id: Union[Label, str] = '5') -> list[Message]:
         """
         Get all messages, sorted by time.
 
         :param page_size: number of posts per page. maximum number 150.
-        :type page_size: ``int``
+        :param label_or_id: get messages by label. default: 5 (All Mail)
         :returns: :py:obj:`list[Message]`
         """
+        label_id = label_or_id.id if isinstance(label_or_id, Label) else label_or_id
         count_page = ceil(self.get_messages_count()[5]['Total'] / page_size)
-        args_list = [(page_num, page_size) for page_num in range(count_page)]
+        args_list = [(page_num, page_size, label_id) for page_num in range(count_page)]
         messages_lists = self._async_helper(self._async_get_messages, args_list)
         messages_dict = self._flattening_lists(messages_lists)
         messages = [self._convert_dict_to_message(message) for message in messages_dict]
@@ -463,6 +464,123 @@ class ProtonMail:
             time.sleep(need_sleep)
         if rise_timeout:
             raise TimeoutError
+        return None
+
+    def get_labels_by_type_id(self, type_id: int) -> list[Label]:
+        """
+        Get labels by type id
+
+        :param type_id: type of labels (folders, labels, etc.)
+                        possible types:
+                            1 - User's custom labels.
+                            2 - Actually, I have no idea what it is. If this returned a non-empty list for you, please let me know what it is
+                            3 - User's custom folders
+                            4 - ProtonMail's system labels (inbox, drafts, sent, spam, etc.)
+        :returns: list of labels
+        """
+        params = {
+            'Type': type_id,
+        }
+        response = self._get('mail', 'core/v4/labels', params=params).json()
+        if response['Code'] not in [1000, 1001]:
+            raise CantGetLabels(response['Error'])
+        type_mapper = {
+            1: 'user label',
+            2: 'undefined',
+            3: 'user folder',
+            4: 'system folder',
+        }
+        labels = [
+            Label(
+                id=label['ID'],
+                name=label['Name'],
+                path=label['Path'],
+                type=label['Type'],
+                type_name=type_mapper[label['Type']],
+                color=label['Color'],
+                notify=label['Notify'],
+                display=label['Display'],
+                parent_id=label.get('ParentID'),
+            )
+            for label in response['Labels']
+        ]
+
+        return labels
+
+    def get_all_labels(self) -> list[Label]:
+        """Get all labels."""
+        labels = []
+        labels1 = self.get_user_folders()
+        labels2 = self.get_labels_by_type_id(2)
+        labels3 = self.get_user_labels()
+        labels4 = self.get_system_labels()
+        labels.extend(labels1)
+        labels.extend(labels2)
+        labels.extend(labels3)
+        labels.extend(labels4)
+        return labels
+
+    def get_system_labels(self) -> list[Label]:
+        """Get ProtonMail's system labels."""
+        labels = self.get_labels_by_type_id(4)
+        return labels
+
+    def get_user_labels(self) -> list[Label]:
+        """Get user's labels."""
+        labels = self.get_labels_by_type_id(3)
+        return labels
+
+    def get_user_folders(self) -> list[Label]:
+        """Get user's folders."""
+        labels = self.get_labels_by_type_id(1)
+        return labels
+
+    def set_label_for_messages(self, label_or_id: Union[Label, str], messages_or_ids: list[Message, str]) -> None:
+        """
+        Set label for messages.
+
+        :param label_or_id: label or label id
+        :param messages_or_ids: list of messages or message IDs.
+        """
+        message_ids = [message.id if isinstance(message, Message) else message for message in messages_or_ids]
+        payload = {
+            'LabelID': label_or_id.id if isinstance(label_or_id, Label) else label_or_id,
+            'IDs': message_ids,
+        }
+        response = self._put('mail', 'mail/v4/messages/label', json=payload).json()
+        if response['Code'] not in [1000, 1001]:
+            raise CantSetLabel(response['Error'])
+        errors = []
+        for resp in response['Responses']:
+            if resp['Response']['Code'] in [1000, 1001]:
+                continue
+            errors.append({'id': resp['ID'], 'code': resp['Response']['Code'], 'error': resp['Response']['Error']})
+        if errors:
+            raise CantSetLabel(errors)
+        return None
+
+    def unset_label_for_messages(self, label_or_id: Union[Label, str], messages_or_ids: list[Message, str]) -> None:
+        """
+        Unset label for messages.
+
+        :param label_or_id: label or label id
+        :param messages_or_ids: list of messages or message IDs.
+        """
+        message_ids = [message.id if isinstance(message, Message) else message for message in messages_or_ids]
+        payload = {
+            'LabelID': label_or_id.id if isinstance(label_or_id, Label) else label_or_id,
+            'IDs': message_ids,
+        }
+        response = self._put('mail', 'mail/v4/messages/unlabel', json=payload).json()
+        if response['Code'] not in [1000, 1001]:
+            raise CantUnsetLabel(response['Error'])
+        errors = []
+        for resp in response['Responses']:
+            if resp['Response']['Code'] in [1000, 1001]:
+                continue
+            errors.append({'id': resp['ID'], 'code': resp['Response']['Code'], 'error': resp['Response']['Error']})
+        if errors:
+            raise CantSetLabel(errors)
         return None
 
     def pgp_import(self, private_key: str, passphrase: str) -> None:
@@ -925,13 +1043,14 @@ class ProtonMail:
             self,
             client: ClientSession,
             page: int,
-            page_size: Optional[int] = 150
+            page_size: Optional[int] = 150,
+            label_id: str = '5',
     ) -> list:
         params = {
             "Page": page,
             "PageSize": page_size,
             "Limit": page_size,
-            "LabelID": "5",
+            "LabelID": label_id,
             "Sort": "Time",
             "Desc": "1",
         }

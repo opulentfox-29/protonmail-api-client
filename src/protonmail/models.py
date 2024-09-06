@@ -63,6 +63,31 @@ class Attachment:
 
 
 @dataclass
+class Label:
+    """Label."""
+    id: str
+    name: str
+    path: Optional[str]
+    type: int
+    type_name: str
+    color: str
+    notify: bool
+    display: bool
+    parent_id: Optional[str] = None
+
+    def __str__(self):
+        return f"<Label [{self.id}, name: {self.name}, type: {self.type}]>"
+
+    def to_dict(self) -> dict[str, any]:
+        """
+        Object to dict
+
+        :returns: :py:obj:`dict`
+        """
+        return asdict(self)
+
+
+@dataclass
 class Message:
     """Message."""
     id: str = ''
@@ -75,7 +100,7 @@ class Message:
     size: int = 0
     body: str = ''
     type: str = ''
-    labels: list[str] = field(default_factory=list)
+    labels: list[str, Label] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
     extra: dict = field(default_factory=dict)
 
@@ -91,6 +116,23 @@ class Message:
         :returns: :py:obj:`dict`
         """
         return asdict(self)
+
+    def is_draft(self) -> bool:
+        """This message is draft or not"""
+        labels_ids = set(label.id if isinstance(label, Label) else label for label in self.labels)
+        if {'1', '8'} & labels_ids:
+            return True
+        return False
+
+    def convert_labels(self, labels: list[Label]):
+        """
+        Replace label_id with label obj. If there is no corresponding label, the label_id will remain.
+
+        :param labels: list of labels
+        """
+        labels_mapper = {label.id: label for label in labels}
+        self.labels = [labels_mapper[label_id] if label_id in labels_mapper else label_id for label_id in self.labels]
+
 
 
 @dataclass
