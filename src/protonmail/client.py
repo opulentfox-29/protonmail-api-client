@@ -133,16 +133,17 @@ class ProtonMail:
 
         return message
 
-    def get_messages(self, page_size: Optional[int] = 150) -> list[Message]:
+    def get_messages(self, page_size: Optional[int] = 150, label_or_id: Union[Label, str] = '5') -> list[Message]:
         """
         Get all messages, sorted by time.
 
         :param page_size: number of posts per page. maximum number 150.
-        :type page_size: ``int``
+        :param label_or_id: get messages by label. default: 5 (All Mail)
         :returns: :py:obj:`list[Message]`
         """
+        label_id = label_or_id.id if isinstance(label_or_id, Label) else label_or_id
         count_page = ceil(self.get_messages_count()[5]['Total'] / page_size)
-        args_list = [(page_num, page_size) for page_num in range(count_page)]
+        args_list = [(page_num, page_size, label_id) for page_num in range(count_page)]
         messages_lists = self._async_helper(self._async_get_messages, args_list)
         messages_dict = self._flattening_lists(messages_lists)
         messages = [self._convert_dict_to_message(message) for message in messages_dict]
@@ -1042,13 +1043,14 @@ class ProtonMail:
             self,
             client: ClientSession,
             page: int,
-            page_size: Optional[int] = 150
+            page_size: Optional[int] = 150,
+            label_id: str = '5',
     ) -> list:
         params = {
             "Page": page,
             "PageSize": page_size,
             "Limit": page_size,
-            "LabelID": "5",
+            "LabelID": label_id,
             "Sort": "Time",
             "Desc": "1",
         }
