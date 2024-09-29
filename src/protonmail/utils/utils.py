@@ -8,6 +8,7 @@ import hashlib
 import os
 
 import bcrypt
+from typing_extensions import Self
 
 from ..constants import SRP_LEN_BYTES
 
@@ -73,3 +74,19 @@ def custom_hash(hash_class: callable, *args: int) -> int:
             hashed.update(data)
 
     return bytes_to_long(hashed.digest())
+
+
+def delete_duplicates_cookies_and_reset_domain(func):
+    def wrapper(self: Self, *args, **kwargs):
+        response = func(self, *args, **kwargs)
+
+        current_cookies: dict = self.session.cookies.get_dict()
+        new_cookies: dict = response.cookies.get_dict()
+        current_cookies.update(new_cookies)  # cookies without duplicates
+
+        self.session.cookies.clear()
+        for name, value in current_cookies.items():
+            self.session.cookies.set(name=name, value=value)  # reset domain
+
+        return response
+    return wrapper

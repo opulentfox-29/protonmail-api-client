@@ -17,7 +17,6 @@ from threading import Thread
 from typing import Optional, Coroutine, Union
 
 import bcrypt
-from typing_extensions import Self
 
 import unicodedata
 from requests import Session
@@ -32,7 +31,7 @@ from .constants import DEFAULT_HEADERS, urls_api
 from .utils.pysrp import User
 from .logger import Logger
 from .pgp import PGP
-from .utils.utils import bcrypt_b64_encode
+from .utils.utils import bcrypt_b64_encode, delete_duplicates_cookies_and_reset_domain
 
 
 class ProtonMail:
@@ -905,22 +904,6 @@ class ProtonMail:
 
         return message
 
-    @staticmethod
-    def __delete_duplicates_cookies_and_reset_domain(func):
-        def wrapper(self: Self, *args, **kwargs):
-            response = func(self, *args, **kwargs)
-
-            current_cookies: dict = self.session.cookies.get_dict()
-            new_cookies: dict = response.cookies.get_dict()
-            current_cookies.update(new_cookies)  # cookies without duplicates
-
-            self.session.cookies.clear()
-            for name, value in current_cookies.items():
-                self.session.cookies.set(name=name, value=value)  # reset domain
-
-            return response
-        return wrapper
-
     def _parse_info_before_login(self, info, password: str) -> tuple[str, str, str]:
         verified = self.pgp.message(info['Modulus'])
         modulus = b64decode(verified.message)
@@ -1257,7 +1240,7 @@ class ProtonMail:
     def _delete(self, base: str, endpoint: str, **kwargs) -> Response:
         return self.__request('delete', base, endpoint, **kwargs)
 
-    @__delete_duplicates_cookies_and_reset_domain
+    @delete_duplicates_cookies_and_reset_domain
     def __request(self, method: str, base: str, endpoint: str, **kwargs) -> Response:
         methods = {
             'get': self.session.get,
