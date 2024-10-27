@@ -1,2 +1,0 @@
-recursive-include src/protonmail *
-prune **/__pycache__
