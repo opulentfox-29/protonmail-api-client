@@ -1,0 +1,3 @@
+setuptools>=63.0.0
+build
+twine
