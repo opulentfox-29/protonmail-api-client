@@ -6,6 +6,7 @@ import pickle
 import string
 import time
 from copy import deepcopy
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -250,7 +251,7 @@ class ProtonMail:
 
         return attachments
 
-    def send_message(self, message: Message, is_html: bool = True) -> Message:
+    def send_message(self, message: Message, is_html: bool = True, delivery_time: Optional[int] = None) -> Message:
         """
         Send the message.
 
@@ -258,8 +259,12 @@ class ProtonMail:
         :type message: ``Message``
         :param is_html: message.body is html or plain text, default: True
         :type is_html: ``bool``
+        :param delivery_time: timestamp (seconds) for scheduled delivery message, default: None (send now)
+        :type delivery_time: ``int``
         :returns: :py:obj:`Message`
         """
+        if delivery_time and delivery_time <= datetime.now().timestamp():
+            raise ValueError(f"Delivery time ({delivery_time}) is less than current, you can't send message to the past")
         recipients_info = []
         for recipient in message.recipients:
             recipient_info = self.__check_email_address(recipient)
@@ -270,7 +275,7 @@ class ProtonMail:
             })
         draft = self.create_draft(message, decrypt_body=False)
         uploaded_attachments = self._upload_attachments(message.attachments, draft.id)
-        multipart = self._multipart_encrypt(message, uploaded_attachments, recipients_info, is_html)
+        multipart = self._multipart_encrypt(message, uploaded_attachments, recipients_info, is_html, delivery_time)
 
         headers = {
             "Content-Type": multipart.content_type
@@ -1148,7 +1153,7 @@ class ProtonMail:
 
         return encrypted_attachment, signature
 
-    def _multipart_encrypt(self, message: Message, uploaded_attachments: list[Attachment], recipients_info: list[dict], is_html: bool) -> MultipartEncoder:
+    def _multipart_encrypt(self, message: Message, uploaded_attachments: list[Attachment], recipients_info: list[dict], is_html: bool, delivery_time: Optional[int] = None) -> MultipartEncoder:
         session_key = None
         recipients_type = set(recipient['type'] for recipient in recipients_info)
         package_types = {
@@ -1158,6 +1163,8 @@ class ProtonMail:
         fields = {
             "DelaySeconds": (None, '10'),
         }
+        if delivery_time:
+            fields['DeliveryTime'] = (None, str(delivery_time))
 
         for recipient_type in recipients_type:
             is_send_to_proton = recipient_type == 1
