@@ -22,6 +22,24 @@ class UserMail:
         """
         return asdict(self)
 
+@dataclass
+class AccountAddress:
+    """One user can have many addresses."""
+    id: str = ''
+    email: str = ''
+    name: str = ''
+
+    def __str__(self):
+        return f"<AccountAddress [{self.email}, {self.name}]>"
+
+    def to_dict(self) -> dict[str, any]:
+        """
+        Object to dict
+
+        :returns: :py:obj:`dict`
+        """
+        return asdict(self)
+
 
 @dataclass
 class Attachment:
@@ -172,6 +190,7 @@ class PgpPairKeys:
     public_key: Optional[str] = None
     private_key: Optional[str] = None
     passphrase: Optional[str] = None
+    email: Optional[str] = None
 
     def __str__(self):
         fingerprint = self.fingerprint_private or self.fingerprint_public
