@@ -27,7 +27,7 @@ from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
 from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels
-from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label
+from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress
 from .constants import DEFAULT_HEADERS, urls_api
 from .utils.pysrp import User
 from .logger import Logger
@@ -54,9 +54,7 @@ class ProtonMail:
         self.user = None
         self._session_path = None
         self._session_auto_save = False
-        self.account_id = ''
-        self.account_email = ''
-        self.account_name = ''
+        self.account_addresses: list[AccountAddress] = []
 
         self.session = Session()
         self.session.proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else dict()
@@ -251,7 +249,7 @@ class ProtonMail:
 
         return attachments
 
-    def send_message(self, message: Message, is_html: bool = True, delivery_time: Optional[int] = None) -> Message:
+    def send_message(self, message: Message, is_html: bool = True, delivery_time: Optional[int] = None, account_address: Optional[AccountAddress] = None) -> Message:
         """
         Send the message.
 
@@ -261,6 +259,9 @@ class ProtonMail:
         :type is_html: ``bool``
         :param delivery_time: timestamp (seconds) for scheduled delivery message, default: None (send now)
         :type delivery_time: ``int``
+        :param account_address: If you have more than 1 address for 1 account (premium only), you can choose which address to send messages from,
+                                default: None (send from first address)
+        :type account_address: ``AccountAddress``
         :returns: :py:obj:`Message`
         """
         if delivery_time and delivery_time <= datetime.now().timestamp():
@@ -273,7 +274,7 @@ class ProtonMail:
                 'type': 1 if recipient_info['RecipientType'] == 1 else 32,
                 'public_key': recipient_info['Keys'][0]['PublicKey'] if recipient_info['Keys'] else None,
             })
-        draft = self.create_draft(message, decrypt_body=False)
+        draft = self.create_draft(message, decrypt_body=False, account_address=account_address)
         uploaded_attachments = self._upload_attachments(message.attachments, draft.id)
         multipart = self._multipart_encrypt(message, uploaded_attachments, recipients_info, is_html, delivery_time)
 
@@ -300,8 +301,10 @@ class ProtonMail:
 
         return sent_message
 
-    def create_draft(self, message: Message, decrypt_body: Optional[bool] = True) -> Message:
+    def create_draft(self, message: Message, decrypt_body: Optional[bool] = True, account_address: Optional[AccountAddress] = None) -> Message:
         """Create the draft."""
+        if not account_address:
+            account_address = self.account_addresses[0]
         pgp_body = self.pgp.encrypt(message.body)
 
         data = {
@@ -314,10 +317,10 @@ class ProtonMail:
                 'MIMEType': 'text/html',
                 'RightToLeft': 0,
                 'Sender': {
-                    'Name': self.account_name,
-                    'Address': self.account_email,
+                    'Name': account_address.name,
+                    'Address': account_address.email,
                 },
-                'AddressID': self.account_id,
+                'AddressID': account_address.id,
                 'Unread': 0,
                 'Body': pgp_body,
             },
@@ -665,16 +668,16 @@ class ProtonMail:
             'pairs_keys': [pair.to_dict() for pair in self.pgp.pairs_keys],
             'aes256_keys': sliced_aes256_keys,
         }
-        account = {
-            'id': self.account_id,
-            'email': self.account_email,
-            'name': self.account_name,
-        }
+        account_addresses = [{
+            'id': account_address.id,
+            'email': account_address.email,
+            'name': account_address.name,
+        } for account_address in self.account_addresses]
         headers = dict(self.session.headers)
         cookies = self.session.cookies.get_dict()
         options = {
             'pgp': pgp,
-            'account': account,
+            'account_addresses': account_addresses,
             'headers': headers,
             'cookies': cookies,
         }
@@ -698,16 +701,18 @@ class ProtonMail:
 
         try:
             pgp = options['pgp']
-            account = options['account']
+            account_addresses = options['account_addresses']
             headers = options['headers']
             cookies = options['cookies']
 
             self.pgp.pairs_keys = [PgpPairKeys(**pair) for pair in pgp['pairs_keys']]
             self.pgp.aes256_keys = pgp['aes256_keys']
 
-            self.account_id = account['id']
-            self.account_email = account['email']
-            self.account_name = account['name']
+            self.account_addresses = [AccountAddress(
+                id=account_address['id'],
+                email=account_address['email'],
+                name=account_address['name'],
+            ) for account_address in account_addresses]
 
             self.session.headers = headers
             for name, value in cookies.items():
@@ -1002,27 +1007,32 @@ class ProtonMail:
             fingerprint_private=user_pair_key['Fingerprint'],
             private_key=user_pair_key['PrivateKey'],
             passphrase=user_private_key_password,
+            email=user_info['Email'],
         ))
         self.logger.info("got user keys", "green")
 
-        address = self.__addresses()['Addresses'][0]
+        account_addresses = self.__addresses()['Addresses']
 
-        self.account_id = address['ID']
-        self.account_email = address['Email']
-        self.account_name = address['DisplayName']
+        self.account_addresses = [AccountAddress(
+            id=account_address['ID'],
+            email=account_address['Email'],
+            name=account_address['DisplayName'],
+        ) for account_address in account_addresses]
 
-        for address_key in address['Keys']:
-            address_passphrase = self.pgp.decrypt(address_key['Token'], user_pair_key['PrivateKey'], user_private_key_password)
+        for account_address in account_addresses:
+            for address_key in account_address['Keys']:
+                address_passphrase = self.pgp.decrypt(address_key['Token'], user_pair_key['PrivateKey'], user_private_key_password)
 
-            self.pgp.pairs_keys.append(PgpPairKeys(
-                is_user_key=False,
-                is_primary=bool(address_key['Primary']),
-                fingerprint_public=address_key['Fingerprints'][0],
-                fingerprint_private=address_key['Fingerprints'][1],
-                public_key=address_key['PublicKey'],
-                private_key=address_key['PrivateKey'],
-                passphrase=address_passphrase,
-            ))
+                self.pgp.pairs_keys.append(PgpPairKeys(
+                    is_user_key=False,
+                    is_primary=bool(address_key['Primary']),
+                    fingerprint_public=address_key['Fingerprints'][0],
+                    fingerprint_private=address_key['Fingerprints'][1],
+                    public_key=address_key['PublicKey'],
+                    private_key=address_key['PrivateKey'],
+                    passphrase=address_passphrase,
+                    email=account_address['Email'],
+                ))
         self.logger.info("got email keys", "green")
 
     def __check_email_address(self, mail_address: Union[UserMail, str]) -> dict:
