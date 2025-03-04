@@ -438,7 +438,7 @@ class ProtonMail:
                 if message.get('Action') != 1:  # new message
                     continue
                 new_message = self._convert_dict_to_message(message['Message'])
-                if message.is_draft():  # skip saving draft
+                if new_message.is_draft():  # skip saving draft
                     continue
                 return new_message
             return None
