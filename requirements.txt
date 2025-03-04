@@ -1,6 +1,6 @@
+PGPy13==0.6.1rc1  # PGPy compatible with python 3.13
 aiohttp
 bcrypt
-PGPy
 pycryptodome
 requests
 requests-toolbelt
