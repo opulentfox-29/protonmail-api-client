@@ -1,6 +1,7 @@
 """Client for api protonmail."""
 
 import asyncio
+import json
 import mimetypes
 import pickle
 import string
@@ -27,8 +28,8 @@ from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
 from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels
-from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress
-from .constants import DEFAULT_HEADERS, urls_api
+from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType
+from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
 from .utils.pysrp import User
 from .logger import Logger
 from .pgp import PGP
@@ -60,7 +61,7 @@ class ProtonMail:
         self.session.proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else dict()
         self.session.headers.update(DEFAULT_HEADERS)
 
-    def login(self, username: str, password: str, getter_2fa_code: callable = lambda: input("enter 2FA code:")) -> None:
+    def login(self, username: str, password: str, getter_2fa_code: callable = lambda: input("enter 2FA code:"), login_type: LoginType = LoginType.WEB) -> None:
         """
         Authorization in ProtonMail.
 
@@ -70,14 +71,24 @@ class ProtonMail:
         :type password: ``str``
         :param getter_2fa_code: function to get Two-Factor Authentication(2FA) code. default: input
         :type getter_2fa_code: ``callable``
+        :param login_type: Type for login, dev - simple login, fewer requests but maybe often CAPTCHA, web - more requests, CAPTCHA like in web. default: WEB
+        :type login_type: ``Enum: LoginType``
         :returns: :py:obj:`None`
         """
+        self.session.headers['x-pm-appversion'] = PM_APP_VERSION_DEV
+        if login_type == LoginType.WEB:
+            self.session.headers['x-pm-appversion'] = PM_APP_VERSION_ACCOUNT
+
+            anonym_session_info = self._crate_anonym_session()
+
+            self._get_tokens(anonym_session_info)  # Cookies for anonym user (not logged in the account yet)
+
         data = {'Username': username}
 
-        info = self.session.post('https://api.protonmail.ch/auth/info', json=data).json()
+        info = self._post('account', 'core/v4/auth/info', json=data).json()
         client_challenge, client_proof, spr_session = self._parse_info_before_login(info, password)
 
-        auth = self.session.post('https://api.protonmail.ch/auth', json={
+        auth = self._post('account', 'core/v4/auth', json={
             'Username': username,
             'ClientEphemeral': client_challenge,
             'ClientProof': client_proof,
@@ -90,18 +101,37 @@ class ProtonMail:
         else:
             self.logger.error("login failure")
 
-        self.session.headers['authorization'] = f'{auth["TokenType"]} {auth["AccessToken"]}'
-        self.session.headers['x-pm-uid'] = auth['UID']
+        if login_type == LoginType.DEV:
+            self._get_tokens(auth)
 
         if auth["TwoFactor"]:
             if not auth["2FA"]["TOTP"]:
                 raise NotImplementedError("Two-Factor Authentication(2FA) implemented only TOTP, disable FIDO2/U2F")
-            response_2fa = self._post('mail', 'core/v4/auth/2fa', json={'TwoFactorCode': getter_2fa_code()})
+            domain = 'account' if login_type == LoginType.WEB else 'mail'
+            response_2fa = self._post(domain, 'core/v4/auth/2fa', json={'TwoFactorCode': getter_2fa_code()})
             if response_2fa.status_code != 200:
                 raise InvalidTwoFactorCode(f"Invalid Two-Factor Authentication(2FA) code: {response_2fa.json()['Error']}")
 
-        self._get_tokens(auth)
-        self._parse_info_after_login(password)
+        user_private_key_password = self._get_user_private_key_password(password)
+        if login_type == LoginType.WEB:
+            user_pk_password_data = {'type': 'default', 'keyPassword': user_private_key_password}
+            encrypted_user_pk_password_data = self.pgp.aes_gcm_encrypt(json.dumps(user_pk_password_data, separators=(',', ':')))
+            b64_encrypted_user_pk_password_data = b64encode(encrypted_user_pk_password_data).decode()
+
+            payload_for_create_fork = {
+                'Payload': b64_encrypted_user_pk_password_data,
+                'ChildClientID': 'web-mail',
+                'Independent': 0,
+            }
+
+            response_data = self._post('account', 'auth/v4/sessions/forks', json=payload_for_create_fork).json()
+
+            self.session.headers['x-pm-appversion'] = PM_APP_VERSION_MAIL
+            fork_data = self._get('mail', f"auth/v4/sessions/forks/{response_data['Selector']}").json()
+
+            self._get_tokens(fork_data)
+
+        self._parse_info_after_login(password, user_private_key_password)
 
     def read_message(
             self,
@@ -955,6 +985,14 @@ class ProtonMail:
 
         return message
 
+    def _crate_anonym_session(self) -> dict:
+        """Create anonymous session."""
+        self.session.headers['x-enforce-unauthsession'] = 'true'
+        anonym_session_data = self._post('account', 'auth/v4/sessions').json()
+        del self.session.headers['x-enforce-unauthsession']
+
+        return anonym_session_data
+
     def _parse_info_before_login(self, info, password: str) -> tuple[str, str, str]:
         verified = self.pgp.message(info['Modulus'])
         modulus = b64decode(verified.message)
@@ -980,6 +1018,9 @@ class ProtonMail:
         return self.user.authenticated()
 
     def _get_tokens(self, auth: dict) -> None:
+        self.session.headers['authorization'] = f'{auth["TokenType"]} {auth["AccessToken"]}'
+        self.session.headers['x-pm-uid'] = auth['UID']
+
         json_data = {
             'UID': auth['UID'],
             'ResponseType': 'token',
@@ -994,14 +1035,12 @@ class ProtonMail:
             raise Exception(f"Can't get refresh token, status: {response.status_code}, json: {response.json()}")
         self.logger.info("got cookies", "green")
 
-    def _parse_info_after_login(self, password: str) -> None:
+    def _parse_info_after_login(self, password: str, user_private_key_password: Optional[str] = None) -> None:
         user_info = self.__get_users()['User']
         user_pair_key = user_info['Keys'][0]
 
-        salts = self.__get_salts()['KeySalts']
-        key_salt = [salt['KeySalt'] for salt in salts if salt['KeySalt']][0]
-        bcrypt_salt = bcrypt_b64_encode(b64decode(key_salt))[:22]
-        user_private_key_password = bcrypt.hashpw(password.encode(), b'$2y$10$' + bcrypt_salt)[29:].decode()
+        if not user_private_key_password:
+            user_private_key_password = self._get_user_private_key_password(password)
 
         self.pgp.pairs_keys.append(PgpPairKeys(
             is_user_key=True,
@@ -1042,6 +1081,19 @@ class ProtonMail:
                     email=account_address['Email'],
                 ))
         self.logger.info("got email keys", "green")
+
+    def _get_user_private_key_password(self, password: str) -> str:
+        """
+        Get password for the user PGP private key.
+
+        :param password: User password for the account.
+        :returns: Password for the user PGP private key.
+        """
+        salts = self.__get_salts()['KeySalts']
+        key_salt = [salt['KeySalt'] for salt in salts if salt['KeySalt']][0]
+        bcrypt_salt = bcrypt_b64_encode(b64decode(key_salt))[:22]
+        user_private_key_password = bcrypt.hashpw(password.encode(), b'$2y$10$' + bcrypt_salt)[29:].decode()
+        return user_private_key_password
 
     def __check_email_address(self, mail_address: Union[UserMail, str]) -> dict:
         """

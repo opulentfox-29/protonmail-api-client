@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "protonmail-api-client"
-version = "2.1.2"
+version = "2.2.0"
 description = "This is not an official python ProtonMail API client. it allows you to read, send and delete messages in protonmail, as well as render a ready-made template with embedded images."
 readme = "README.md"
 authors = [{ name = "opulentfox-29", email = "3acqw2bx@duck.com" }]

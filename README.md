@@ -114,3 +114,40 @@ new_messages = []
 proton.event_polling(callback, new_messages)
 print(new_messages)
 ```
+
+### Avoid CAPTCHA
+Instructions to avoid CAPTCHA:
+1. There maybe a DDoS attack, just wait 1-2 days.
+2. Stop logging into your account too often, use the `save_session` and `load_session` methods.
+3. Change your IP address (for example, reboot your router, use VPN, Share mobile Internet).
+4. If CAPTCHA also appears in your browser:
+   1. Open a browser tab in incognito mode.
+   2. Log into your account.
+   3. Solve the CAPTCHA.
+   4. Wait for your mail to load.
+   5. Close the tab.
+   6. Repeat this about 10 times, then your account (only this one) can be allowlisted, and authorization (including `protonmail-api-client`) will be without CAPTCHA.
+5. Use `cookies` from the browser:
+   1. Open a browser tab in incognito mode.
+   2. Open the login page (https://account.proton.me/mail).
+   3. Open the "DevTools" panel (press `F12`).
+   4. Go to the "network" tab.
+   5. Enable recording network log (press `CTRL + E`).
+   6. Log in to your account (check "Keep me signed in").
+   7. Find the `auth` request in the "Network" tab and open it.
+   8. In the "Headers" tab of the request, scroll down to the `Set-Cookie` items in the "Response Headers" list.
+   9. Copy the key and value from the cookies: `REFRESH-*`, `AUTH-*`.
+   10. Paste the key and value into the following code (`x-pm-uid` is the part after `AUTH-`).
+   11. Close the incognito tab (Do not click the "log out" button, otherwise cookies will be invalidated).
+```python
+proton = ProtonMail()
+
+proton.session.headers['x-pm-uid'] = 'lgfbju2dxc1234567890mrf3tqmqfhv6q'  # This is the part after `AUTH-`
+proton.session.cookies['AUTH-lgfbju2dxc1234567890mrf3tqmqfhv6q'] = 'qr4uci1234567890anafsku8dd34vkwq'
+proton.session.cookies['REFRESH-lgfbju2dxc1234567890mrf3tqmqfhv6q'] = '%7B%22ResponseType%22%3A%22token%22%2C%22ClientID%22%3A%22WebAccount%22%2C%22GrantType%22%3A%22refresh_token%22%2C%22RefreshToken%22%3A%22ceo5gp1234567890fghuinsxxtgmpvdduxg%22%2C%22UID%22%3A%22lgfbju2dxc1234567890mrf3tqmqfhv6q%22%7D'
+
+password = 'YourPassword123'
+proton._parse_info_after_login(password)
+proton.save_session('session.pickle')
+```
+![cookies interception](assets/cookies-interception.png)

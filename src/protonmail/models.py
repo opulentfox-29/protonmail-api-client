@@ -1,7 +1,20 @@
 """Dataclasses."""
 from dataclasses import dataclass, field, asdict
+from enum import Enum
 from typing import Optional
 from uuid import uuid4
+
+
+class LoginType(Enum):
+    """
+    Login type
+
+    Attributes:
+        WEB: Harder auth, more requests, CAPTCHA like in web
+        DEV: Simpler auth, fewer requests, maybe more often CAPTCHA
+    """
+    WEB = 'web'
+    DEV = 'dev'
 
 
 @dataclass
