@@ -1062,6 +1062,12 @@ class ProtonMail:
 
         for account_address in account_addresses:
             for address_key in account_address['Keys']:
+                if address_key['Token'] is None:  # Old (older than ~2020) keys is RSA, don't work
+                    self.logger.warning(
+                        f"Encryption Key ({address_key['Fingerprint']}) is invalid (maybe old RSA), will be skipped (you can't read messages by this key)",
+                        "yellow",
+                    )
+                    continue
                 address_passphrase = self.pgp.decrypt(address_key['Token'], user_pair_key['PrivateKey'], user_private_key_password)
 
                 self.pgp.pairs_keys.append(PgpPairKeys(
