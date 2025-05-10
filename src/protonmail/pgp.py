@@ -6,6 +6,7 @@ from base64 import b64decode, b64encode
 from typing import Union, Optional
 
 from Crypto.Cipher import AES
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pgpy import PGPMessage, PGPKey
 
 from protonmail.exceptions import NoKeysForDecryptThisMessage
@@ -129,6 +130,20 @@ class PGP:
         body_key = b64encode(session_key)
 
         return encrypted_message, body_key
+
+    def aes_gcm_encrypt(self, message: str, session_key: Optional[bytes] = None) -> bytes:
+        """Encrypt AES GCM."""
+        if not session_key:
+            session_key = os.urandom(32)
+        iv = os.urandom(16)
+
+        aesgcm = AESGCM(session_key)
+        binary_message = message.encode() if isinstance(message, str) else message
+        encrypted_message = aesgcm.encrypt(iv, binary_message, None)
+
+        iv_and_message = iv + encrypted_message
+
+        return iv_and_message
 
     @staticmethod
     def create_message(blob: any):
