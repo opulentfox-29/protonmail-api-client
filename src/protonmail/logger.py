@@ -21,7 +21,7 @@ class Logger:
             return
         self.func(status)
 
-    def info(self, status: str, color: str = '') -> None:
+    def info(self, status: str, color: str = 'reset') -> None:
         """Info."""
         if self.level < 2:
             return

@@ -1,7 +1,7 @@
 """Dataclasses."""
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Optional
+from typing import Optional, Callable
 from uuid import uuid4
 
 
@@ -15,6 +15,31 @@ class LoginType(Enum):
     """
     WEB = 'web'
     DEV = 'dev'
+
+
+def default_function_for_manual_solve_captcha(auth_data: dict) -> str:
+    """ Default function fo manual solve CAPTCHA. """
+    print(auth_data['Details']['WebUrl'])
+    token_from_init = input('Token from init: ')
+    return token_from_init
+
+
+@dataclass
+class CaptchaConfig:
+    """ Config to solve CAPTCHA. """
+    class CaptchaType(Enum):
+        """
+        CAPTCHA solve type
+
+        Attributes:
+            AUTO: Attempt fully automatic CAPTCHA solution. It does not guarantee the result, sometimes it is necessary to run several times.
+            MANUAL: Manual CAPTCHA solution. Requires additional actions from you, read more: https://github.com/opulentfox-29/protonmail-api-client?tab=readme-ov-file#solve-captcha
+        """
+        AUTO = 'auto'
+        MANUAL = 'manual'
+
+    type: CaptchaType = CaptchaType.AUTO
+    function_for_manual: Callable = default_function_for_manual_solve_captcha
 
 
 @dataclass

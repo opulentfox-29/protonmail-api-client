@@ -37,3 +37,11 @@ class CantSetLabel(Exception):
 
 class CantUnsetLabel(Exception):
     """Error when try to unset label for a message"""
+
+
+class CantSolveImageCaptcha(Exception):
+    """Error when try to solve image CAPTCHA, maybe this image hard, just retry login"""
+
+
+class InvalidCaptcha(Exception):
+    """Error when solved CAPTCHA, but something wrong"""
