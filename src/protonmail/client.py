@@ -4,6 +4,7 @@ import asyncio
 import json
 import mimetypes
 import pickle
+import re
 import string
 import time
 from copy import deepcopy
@@ -27,9 +28,11 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels
-from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType
+from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels, \
+    CantSolveImageCaptcha, InvalidCaptcha
+from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType, CaptchaConfig
 from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
+from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
 from .utils.pysrp import User
 from .logger import Logger
 from .pgp import PGP
@@ -61,7 +64,8 @@ class ProtonMail:
         self.session.proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else dict()
         self.session.headers.update(DEFAULT_HEADERS)
 
-    def login(self, username: str, password: str, getter_2fa_code: callable = lambda: input("enter 2FA code:"), login_type: LoginType = LoginType.WEB) -> None:
+    def login(self, username: str, password: str, getter_2fa_code: callable = lambda: input("enter 2FA code:"), login_type: LoginType = LoginType.WEB,
+              captcha_config: CaptchaConfig = CaptchaConfig()) -> None:
         """
         Authorization in ProtonMail.
 
@@ -73,6 +77,8 @@ class ProtonMail:
         :type getter_2fa_code: ``callable``
         :param login_type: Type for login, dev - simple login, fewer requests but maybe often CAPTCHA, web - more requests, CAPTCHA like in web. default: WEB
         :type login_type: ``Enum: LoginType``
+        :param captcha_config: Config for CAPTCHA resolver (auto or manual). Default: auto. More: https://github.com/opulentfox-29/protonmail-api-client?tab=readme-ov-file#solve-captcha
+        :type login_type: ``CaptchaConfig``
         :returns: :py:obj:`None`
         """
         self.session.headers['x-pm-appversion'] = PM_APP_VERSION_DEV
@@ -95,6 +101,17 @@ class ProtonMail:
             'SRPSession': spr_session,
             'PersistentCookies': 1,
         }).json()
+
+        if auth['Code'] == 9001:  # Captcha
+            self._captcha_processing(auth, captcha_config)
+
+            auth = self._post('account', 'core/v4/auth', json={
+                'Username': username,
+                'ClientEphemeral': client_challenge,
+                'ClientProof': client_proof,
+                'SRPSession': spr_session,
+                'PersistentCookies': 1,
+            }).json()
 
         if self._login_process(auth):
             self.logger.info("login success", "green")
@@ -1006,10 +1023,82 @@ class ProtonMail:
 
         return client_challenge, client_proof, spr_session
 
+    def _captcha_processing(self, auth: dict, captcha_config: CaptchaConfig):
+        """ Processing CAPTCHA logic. """
+        self.logger.warning("Got CAPTCHA")
+        captcha_token = auth['Details']['HumanVerificationToken']
+        params = {
+            'Token': captcha_token,
+            'ForceWebMessaging': 1,
+        }
+        js_captcha = self._get('account-api', 'core/v4/captcha', params=params).text
+        send_token_func = re.search(r"return sendToken\((.*?)\);", js_captcha).group(1)
+        sub_token = ''.join(re.findall(r"'([^']+)'", send_token_func))
+
+        if captcha_config.type == CaptchaConfig.CaptchaType.AUTO:
+            proved_token = self._captcha_auto_solving(captcha_token)
+            self.logger.info("CAPTCHA auto solved")
+        else:
+            proved_token = captcha_config.function_for_manual(auth)
+            self.logger.info("CAPTCHA manual solved")
+
+        hvt_token = f'{captcha_token}:{sub_token}{proved_token}'
+
+        self.session.headers['x-pm-human-verification-token-type'] = 'captcha'
+        self.session.headers['x-pm-human-verification-token'] = hvt_token
+
+    def _captcha_auto_solving(self, captcha_token: str) -> str:
+        """ Auto solve CAPTCHA. """
+        params = {
+            'challengeType': '2D',
+            'parentURL': f'https://account-api.proton.me/core/v4/captcha?Token={captcha_token}&ForceWebMessaging=1',
+            'displayedLang': 'en',
+            'supportedLangs': 'en,en,en,en',
+            'purpose': 'login',
+            'token': captcha_token,
+        }
+        init_data = self._get('account-api', 'captcha/v1/api/init', params=params).json()
+
+        params = {
+            'token': init_data['token']
+        }
+        image_captcha = self._get('account-api', 'captcha/v1/api/bg', params=params).content
+
+        puzzle_coordinates = get_captcha_puzzle_coordinates(image_captcha)
+        if puzzle_coordinates is None:
+            raise CantSolveImageCaptcha("Maybe this image is hard, just retry login or use manual CAPTCHA solver")
+
+        answers = [solve_challenge(challenge) for challenge in init_data['challenges']]
+
+        captcha_object = {
+            'x': puzzle_coordinates[0],
+            'y': puzzle_coordinates[1],
+            'answers': answers,
+            'clientData': None,
+            'pieceLoadElapsedMs': 140,
+            'bgLoadElapsedMs': 180,
+            'challengeLoadElapsedMs': 180,
+            'solveChallengeMs': 5000,
+            'powElapsedMs': 540
+        }
+        pcaptcha = json.dumps(captcha_object)
+        self.session.headers['pcaptcha'] = pcaptcha
+
+        params = {
+            'token': init_data['token'],
+            'contestId': init_data['contestId'],
+            'purpose': 'login'
+        }
+        validated = self._get('account-api', 'captcha/v1/api/validate', params=params)
+        if validated.status_code != 200:
+            raise InvalidCaptcha(f"Validate CAPTCHA returns code: {validated.status_code}")
+
+        return init_data['token']
+
     def _login_process(self, auth: dict) -> bool:
         if auth["Code"] not in (1000, 1001):
-            if auth["Code"] == 9001:
-                raise NotImplementedError("CAPTCHA not implemented")
+            if auth["Code"] in [9001, 12087]:
+                raise InvalidCaptcha(auth['Error'])
             if auth["Code"] == 2028:
                 raise ConnectionRefusedError("Too many recent logins")
 

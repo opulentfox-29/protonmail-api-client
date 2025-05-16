@@ -24,6 +24,7 @@ urls_api = {
     'api': 'https://api.protonmail.ch/api',
     'mail': 'https://mail.proton.me/api',
     'account': 'https://account.proton.me/api',
+    'account-api': 'https://account-api.proton.me',
     'assets': 'https://account.proton.me/assets'
 }
 
