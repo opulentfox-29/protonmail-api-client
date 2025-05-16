@@ -1,7 +1,5 @@
 This is not an official python ProtonMail API client. it allows you to read, send and delete messages in protonmail, as well as render a ready-made template with embedded images.
 
-> [!NOTE]
-> Congratulations, no need more to execute OpenPGP.js via playwright 🎉🎉🎉
 
 ## Installation
 ``` 
