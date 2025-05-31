@@ -328,6 +328,13 @@ class ProtonMail:
                 'type': 1 if cc_info['RecipientType'] == 1 else 32,
                 'public_key': cc_info['Keys'][0]['PublicKey'] if cc_info['Keys'] else None,
             })
+        for bcc_recipient in getattr(message, 'bcc', []):
+            bcc_info = self.__check_email_address(bcc_recipient)
+            recipients_info.append({
+                'address': bcc_recipient.address,
+                'type': 1 if bcc_info['RecipientType'] == 1 else 32,
+                'public_key': bcc_info['Keys'][0]['PublicKey'] if bcc_info['Keys'] else None,
+            })
         draft = self.create_draft(message, decrypt_body=False, account_address=account_address)
         uploaded_attachments = self._upload_attachments(message.attachments, draft.id)
         multipart = self._multipart_encrypt(message, uploaded_attachments, recipients_info, is_html, delivery_time)
@@ -392,6 +399,13 @@ class ProtonMail:
                 {
                     'Name': cc_recipient.name,
                     'Address': cc_recipient.address,
+                }
+            )
+        for bcc_recipient in getattr(message, 'bcc', []):
+            data['Message']['BCCList'].append(
+                {
+                    'Name': bcc_recipient.name,
+                    'Address': bcc_recipient.address,
                 }
             )
 
@@ -844,6 +858,17 @@ class ProtonMail:
             ProtonMail.create_mail_user(**i)
             for i in cc
         ]
+        bcc = kwargs.get('bcc', [])
+        bcc = [
+            {'address': bc}
+            if isinstance(bc, str)
+            else bc
+            for bc in bcc
+        ]
+        kwargs['bcc'] = [
+            ProtonMail.create_mail_user(**i)
+            for i in bcc
+        ]
         if kwargs.get('sender'):
             kwargs['sender'] = ProtonMail.create_mail_user(**kwargs.get('sender'))
 
@@ -900,6 +925,13 @@ class ProtonMail:
                 user
             ) for user in response.get('CCList', [])
         ]
+        bcc = [
+            UserMail(
+                user['Name'],
+                user['Address'],
+                user
+            ) for user in response.get('BCCList', [])
+        ]
         attachments_dict = response.get('Attachments', [])
         attachments = []
         for attachment in attachments_dict:
@@ -913,6 +945,7 @@ class ProtonMail:
             sender=sender,
             recipients=recipients,
             cc=cc,
+            bcc=bcc,
             time=response['Time'],
             size=response['Size'],
             body=response.get('Body', ''),

@@ -153,6 +153,7 @@ class Message:
     sender: UserMail = field(default_factory=UserMail)
     recipients: list[UserMail] = field(default_factory=list)
     cc: list[UserMail] = field(default_factory=list)
+    bcc: list[UserMail] = field(default_factory=list)
     time: int = 0
     size: int = 0
     body: str = ''
