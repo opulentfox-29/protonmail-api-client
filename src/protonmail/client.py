@@ -370,6 +370,7 @@ class ProtonMail:
                 'AddressID': account_address.id,
                 'Unread': 0,
                 'Body': pgp_body,
+                'ExternalID': message.external_id,
             },
         }
         for recipient in message.recipients:
