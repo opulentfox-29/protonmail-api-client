@@ -368,6 +368,11 @@ class ProtonMail:
             account_address = self.account_addresses[0]
         pgp_body = self.pgp.encrypt(message.body)
 
+        # Sanitize external_id if present
+        external_id = message.external_id
+        if external_id and external_id.startswith('<') and external_id.endswith('>'):
+            external_id = external_id[1:-1]
+
         data = {
             'Message': {
                 'ToList': [],
@@ -384,7 +389,7 @@ class ProtonMail:
                 'AddressID': account_address.id,
                 'Unread': 0,
                 'Body': pgp_body,
-                'ExternalID': message.external_id,
+                'ExternalID': external_id,
             },
         }
         for recipient in message.recipients:
