@@ -63,9 +63,13 @@ html = f"""
 # Send message
 new_message = proton.create_message(
     recipients=["to1@proton.me", "to2@gmail.com"],
+    cc=["cc1@proton.me", "cc2@gmail.com"],
+    bcc=["bcc1@proton.me", "bcc2@gmail.com"],
     subject="My first message",
     body=html,  # html or just text
     attachments=[img_attachment, pdf_attachment],
+    external_id="some-message-id-header-if-you-want-to-specify",
+    in_reply_to="message-id-of-the-mail-to-reply-to",
 )
 
 sent_message = proton.send_message(new_message)
