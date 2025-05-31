@@ -161,6 +161,7 @@ class Message:
     labels: list[str, Label] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
     external_id: str = ''
+    in_reply_to: str = ''
     extra: dict = field(default_factory=dict)
 
     def __str__(self):

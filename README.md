@@ -69,6 +69,7 @@ new_message = proton.create_message(
     body=html,  # html or just text
     attachments=[img_attachment, pdf_attachment],
     external_id="some-message-id-header-if-you-want-to-specify",
+    in_reply_to="message-id-of-the-mail-to-reply-to",
 )
 
 sent_message = proton.send_message(new_message)
