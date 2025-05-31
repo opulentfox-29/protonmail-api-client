@@ -368,10 +368,30 @@ class ProtonMail:
             account_address = self.account_addresses[0]
         pgp_body = self.pgp.encrypt(message.body)
 
-        # Sanitize external_id if present
+        # Sanitize external_id and in_reply_to if present
         external_id = message.external_id
         if external_id and external_id.startswith('<') and external_id.endswith('>'):
             external_id = external_id[1:-1]
+
+        in_reply_to = message.in_reply_to
+        if in_reply_to and in_reply_to.startswith('<') and in_reply_to.endswith('>'):
+            in_reply_to = in_reply_to[1:-1]
+
+        parent_id = None
+        if in_reply_to:
+            # Search for parent message by ExternalID
+            filter_params = {
+                "Page": 0,
+                "PageSize": 1,
+                "ExternalID": in_reply_to,
+                "AddressID": account_address.id,
+            }
+            resp = self._get('mail', 'mail/v4/messages', params=filter_params).json()
+            msgs = resp.get("Messages", [])
+            if msgs:
+                parent_id = msgs[0]["ID"]
+            else:
+                parent_id = in_reply_to
 
         data = {
             'Message': {
@@ -392,6 +412,9 @@ class ProtonMail:
                 'ExternalID': external_id,
             },
         }
+        if parent_id:
+            data['ParentID'] = parent_id
+            data['Action'] = 1 # reply
         for recipient in message.recipients:
             data['Message']['ToList'].append(
                 {
