@@ -321,6 +321,20 @@ class ProtonMail:
                 'type': 1 if recipient_info['RecipientType'] == 1 else 32,
                 'public_key': recipient_info['Keys'][0]['PublicKey'] if recipient_info['Keys'] else None,
             })
+        for cc_recipient in getattr(message, 'cc', []):
+            cc_info = self.__check_email_address(cc_recipient)
+            recipients_info.append({
+                'address': cc_recipient.address,
+                'type': 1 if cc_info['RecipientType'] == 1 else 32,
+                'public_key': cc_info['Keys'][0]['PublicKey'] if cc_info['Keys'] else None,
+            })
+        for bcc_recipient in getattr(message, 'bcc', []):
+            bcc_info = self.__check_email_address(bcc_recipient)
+            recipients_info.append({
+                'address': bcc_recipient.address,
+                'type': 1 if bcc_info['RecipientType'] == 1 else 32,
+                'public_key': bcc_info['Keys'][0]['PublicKey'] if bcc_info['Keys'] else None,
+            })
         draft = self.create_draft(message, decrypt_body=False, account_address=account_address)
         uploaded_attachments = self._upload_attachments(message.attachments, draft.id)
         multipart = self._multipart_encrypt(message, uploaded_attachments, recipients_info, is_html, delivery_time)
@@ -354,6 +368,31 @@ class ProtonMail:
             account_address = self.account_addresses[0]
         pgp_body = self.pgp.encrypt(message.body)
 
+        # Sanitize external_id and in_reply_to if present
+        external_id = message.external_id
+        if external_id and external_id.startswith('<') and external_id.endswith('>'):
+            external_id = external_id[1:-1]
+
+        in_reply_to = message.in_reply_to
+        if in_reply_to and in_reply_to.startswith('<') and in_reply_to.endswith('>'):
+            in_reply_to = in_reply_to[1:-1]
+
+        parent_id = None
+        if in_reply_to:
+            # Search for parent message by ExternalID
+            filter_params = {
+                "Page": 0,
+                "PageSize": 1,
+                "ExternalID": in_reply_to,
+                "AddressID": account_address.id,
+            }
+            resp = self._get('mail', 'mail/v4/messages', params=filter_params).json()
+            msgs = resp.get("Messages", [])
+            if msgs:
+                parent_id = msgs[0]["ID"]
+            else:
+                parent_id = in_reply_to
+
         data = {
             'Message': {
                 'ToList': [],
@@ -370,13 +409,31 @@ class ProtonMail:
                 'AddressID': account_address.id,
                 'Unread': 0,
                 'Body': pgp_body,
+                'ExternalID': external_id,
             },
         }
+        if parent_id:
+            data['ParentID'] = parent_id
+            data['Action'] = 1 # reply
         for recipient in message.recipients:
             data['Message']['ToList'].append(
                 {
                     'Name': recipient.name,
                     'Address': recipient.address,
+                }
+            )
+        for cc_recipient in getattr(message, 'cc', []):
+            data['Message']['CCList'].append(
+                {
+                    'Name': cc_recipient.name,
+                    'Address': cc_recipient.address,
+                }
+            )
+        for bcc_recipient in getattr(message, 'bcc', []):
+            data['Message']['BCCList'].append(
+                {
+                    'Name': bcc_recipient.name,
+                    'Address': bcc_recipient.address,
                 }
             )
 
@@ -818,6 +875,28 @@ class ProtonMail:
             ProtonMail.create_mail_user(**i)
             for i in recipients
         ]
+        cc = kwargs.get('cc', [])
+        cc = [
+            {'address': c}
+            if isinstance(c, str)
+            else c
+            for c in cc
+        ]
+        kwargs['cc'] = [
+            ProtonMail.create_mail_user(**i)
+            for i in cc
+        ]
+        bcc = kwargs.get('bcc', [])
+        bcc = [
+            {'address': bc}
+            if isinstance(bc, str)
+            else bc
+            for bc in bcc
+        ]
+        kwargs['bcc'] = [
+            ProtonMail.create_mail_user(**i)
+            for i in bcc
+        ]
         if kwargs.get('sender'):
             kwargs['sender'] = ProtonMail.create_mail_user(**kwargs.get('sender'))
 
@@ -867,6 +946,20 @@ class ProtonMail:
                 user
             ) for user in response['ToList']
         ]
+        cc = [
+            UserMail(
+                user['Name'],
+                user['Address'],
+                user
+            ) for user in response.get('CCList', [])
+        ]
+        bcc = [
+            UserMail(
+                user['Name'],
+                user['Address'],
+                user
+            ) for user in response.get('BCCList', [])
+        ]
         attachments_dict = response.get('Attachments', [])
         attachments = []
         for attachment in attachments_dict:
@@ -879,6 +972,8 @@ class ProtonMail:
             unread=response['Unread'],
             sender=sender,
             recipients=recipients,
+            cc=cc,
+            bcc=bcc,
             time=response['Time'],
             size=response['Size'],
             body=response.get('Body', ''),

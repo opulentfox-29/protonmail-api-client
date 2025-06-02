@@ -152,12 +152,16 @@ class Message:
     unread: bool = False
     sender: UserMail = field(default_factory=UserMail)
     recipients: list[UserMail] = field(default_factory=list)
+    cc: list[UserMail] = field(default_factory=list)
+    bcc: list[UserMail] = field(default_factory=list)
     time: int = 0
     size: int = 0
     body: str = ''
     type: str = ''
     labels: list[str, Label] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
+    external_id: str = ''
+    in_reply_to: str = ''
     extra: dict = field(default_factory=dict)
 
     def __str__(self):
