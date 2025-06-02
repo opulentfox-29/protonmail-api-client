@@ -414,7 +414,7 @@ class ProtonMail:
         }
         if parent_id:
             data['ParentID'] = parent_id
-            data['Action'] = 1 # reply
+            data['Action'] = 0 # reply
         for recipient in message.recipients:
             data['Message']['ToList'].append(
                 {
