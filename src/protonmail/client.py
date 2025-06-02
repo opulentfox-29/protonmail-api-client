@@ -831,6 +831,14 @@ class ProtonMail:
         """Create UserMail."""
         kwargs = deepcopy(kwargs)
         address = kwargs['address']
+        match = re.match(r'^(.*?)\s*<([^>]+)>$', address)
+        if match:
+            if not kwargs.get('name'):
+                kwargs['name'] = match.group(1).strip()
+            kwargs['address'] = match.group(2).strip()
+        elif address.startswith('<') and address.endswith('>'):
+            kwargs['address'] = address[1:-1]
+
         if not kwargs.get('name'):
             kwargs['name'] = address
         return UserMail(**kwargs)
