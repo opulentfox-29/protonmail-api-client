@@ -62,9 +62,9 @@ html = f"""
 
 # Send message
 new_message = proton.create_message(
-    recipients=["to1@proton.me", "to2@gmail.com"],
-    cc=["cc1@proton.me", "cc2@gmail.com"],
-    bcc=["bcc1@proton.me", "bcc2@gmail.com"],
+    recipients=["to1@proton.me", "to2@gmail.com", "Name of recipient <to3@outlook.com>"],
+    cc=["cc1@proton.me", "cc2@gmail.com", "Name of recipient <cc3@outlook.com>"],
+    bcc=["bcc1@proton.me", "bcc2@gmail.com, "Name of recipient <bcc3@outlook.com>"],
     subject="My first message",
     body=html,  # html or just text
     attachments=[img_attachment, pdf_attachment],
