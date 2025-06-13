@@ -1203,7 +1203,7 @@ class ProtonMail:
             if auth["Code"] in [9001, 12087]:
                 raise InvalidCaptcha(auth['Error'])
             if auth["Code"] == 2028:
-                raise ConnectionRefusedError("Too many recent logins")
+                raise ConnectionRefusedError(f"Too many recent logins: {auth.get('Error')}")
 
         self.user.verify_session(b64decode(auth['ServerProof']))
 
