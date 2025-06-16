@@ -142,6 +142,8 @@ class ProtonMail:
             }
 
             response_data = self._post('account', 'auth/v4/sessions/forks', json=payload_for_create_fork).json()
+            if not response_data.get('Selector'):
+                raise ValueError(response_data)
 
             self.session.headers['x-pm-appversion'] = PM_APP_VERSION_MAIL
             fork_data = self._get('mail', f"auth/v4/sessions/forks/{response_data['Selector']}").json()
