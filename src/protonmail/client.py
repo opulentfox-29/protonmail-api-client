@@ -321,14 +321,14 @@ class ProtonMail:
                 'type': 1 if recipient_info['RecipientType'] == 1 else 32,
                 'public_key': recipient_info['Keys'][0]['PublicKey'] if recipient_info['Keys'] else None,
             })
-        for cc_recipient in getattr(message, 'cc', []):
+        for cc_recipient in message.cc:
             cc_info = self.__check_email_address(cc_recipient)
             recipients_info.append({
                 'address': cc_recipient.address,
                 'type': 1 if cc_info['RecipientType'] == 1 else 32,
                 'public_key': cc_info['Keys'][0]['PublicKey'] if cc_info['Keys'] else None,
             })
-        for bcc_recipient in getattr(message, 'bcc', []):
+        for bcc_recipient in message.bcc:
             bcc_info = self.__check_email_address(bcc_recipient)
             recipients_info.append({
                 'address': bcc_recipient.address,
