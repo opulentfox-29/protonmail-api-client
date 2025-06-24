@@ -19,8 +19,10 @@ class LoginType(Enum):
 
 def default_function_for_manual_solve_captcha(auth_data: dict) -> str:
     """ Default function to manual solve CAPTCHA. """
-    print(auth_data['Details']['WebUrl'])
-    token_from_init = input('Token from init: ')
+    print("Open the URL below on a web browser in incognito mode:")
+    print(f"URL: {auth_data['Details']['WebUrl']}\n")
+    print("Follow the instructions on https://github.com/opulentfox-29/protonmail-api-client/blob/master/README.md#captcha to get token.")
+    token_from_init = input('Enter the token: ')
     return token_from_init
 
 def get_token_from_url(url):
