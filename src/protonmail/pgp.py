@@ -5,7 +5,8 @@ import warnings
 from base64 import b64decode, b64encode
 from typing import Union, Optional
 
-from Crypto.Cipher import AES
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pgpy import PGPMessage, PGPKey
 
@@ -114,19 +115,26 @@ class PGP:
 
     def aes256_decrypt(self, data: bytes, key: bytes) -> Union[bytes, int]:
         """Decrypt AES256."""
-        cipher = AES.new(key, AES.MODE_CFB, self.iv, segment_size=128)
-        decrypted_data = cipher.decrypt(data)[18:-22]
+        decryptor = Cipher(
+            algorithms.AES(key),
+            modes.CFB(self.iv),
+            backend=default_backend()
+        ).decryptor()
+        decrypted_data = decryptor.update(data) + decryptor.finalize()
 
-        return decrypted_data
+        return decrypted_data[18:-22]
 
     def aes256_encrypt(self, message: str, session_key: Optional[bytes] = None) -> tuple[bytes, bytes]:
         """Encrypt AES256."""
         if not session_key:
             session_key = os.urandom(32)
-
-        cipher = AES.new(session_key, AES.MODE_CFB, self.iv, segment_size=128)
         binary_message = message.encode() if isinstance(message, str) else message
-        encrypted_message = cipher.encrypt(binary_message)
+        encryptor = Cipher(
+            algorithms.AES(session_key),
+            modes.CFB(self.iv),
+            backend=default_backend()
+        ).encryptor()
+        encrypted_message = encryptor.update(binary_message) + encryptor.finalize()
         body_key = b64encode(session_key)
 
         return encrypted_message, body_key
