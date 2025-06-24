@@ -4,7 +4,6 @@ bcrypt
 cryptography
 numpy
 opencv-python
-pycryptodome
 requests
 requests-toolbelt
 typing_extensions
