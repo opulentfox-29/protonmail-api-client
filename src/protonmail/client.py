@@ -32,7 +32,6 @@ from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError
     CantSolveImageCaptcha, InvalidCaptcha
 from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType, CaptchaConfig
 from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
-from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
 from .utils.pysrp import User
 from .logger import Logger
 from .pgp import PGP
@@ -77,7 +76,7 @@ class ProtonMail:
         :type getter_2fa_code: ``callable``
         :param login_type: Type for login, dev - simple login, fewer requests but maybe often CAPTCHA, web - more requests, CAPTCHA like in web. default: WEB
         :type login_type: ``Enum: LoginType``
-        :param captcha_config: Config for CAPTCHA resolver (auto or manual). Default: auto. More: https://github.com/opulentfox-29/protonmail-api-client?tab=readme-ov-file#solve-captcha
+        :param captcha_config: Config for CAPTCHA resolver (auto, manual or pyqt). Default: auto. More: https://github.com/opulentfox-29/protonmail-api-client?tab=readme-ov-file#solve-captcha
         :type login_type: ``CaptchaConfig``
         :returns: :py:obj:`None`
         """
@@ -1141,6 +1140,10 @@ class ProtonMail:
         if captcha_config.type == CaptchaConfig.CaptchaType.AUTO:
             proved_token = self._captcha_auto_solving(captcha_token)
             self.logger.info("CAPTCHA auto solved")
+        elif captcha_config.type == CaptchaConfig.CaptchaType.PYQT:
+            self.logger.info("Opening a browser window to solve CAPTCHA...")
+            proved_token = captcha_config.function_for_pyqt(auth)
+            self.logger.info("CAPTCHA solved")
         else:
             proved_token = captcha_config.function_for_manual(auth)
             self.logger.info("CAPTCHA manual solved")
@@ -1151,6 +1154,9 @@ class ProtonMail:
         self.session.headers['x-pm-human-verification-token'] = hvt_token
 
     def _captcha_auto_solving(self, captcha_token: str) -> str:
+
+        from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
+
         """ Auto solve CAPTCHA. """
         params = {
             'challengeType': '2D',

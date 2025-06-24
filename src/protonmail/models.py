@@ -18,11 +18,68 @@ class LoginType(Enum):
 
 
 def default_function_for_manual_solve_captcha(auth_data: dict) -> str:
-    """ Default function fo manual solve CAPTCHA. """
+    """ Default function to manual solve CAPTCHA. """
     print(auth_data['Details']['WebUrl'])
     token_from_init = input('Token from init: ')
     return token_from_init
 
+def get_token_from_url(url):
+    import urllib.parse
+    parsed_url = urllib.parse.urlparse(url)
+    parsed_query = urllib.parse.parse_qs(parsed_url.query)
+    return parsed_query.get('token', [''])[0]
+
+def default_function_for_pyqt_solve_captcha(auth_data: dict) -> str:
+    """ Default function to solve CAPTCHA using PyQt web browser. """
+
+    import os
+    import sys
+    from PyQt6.QtWidgets import QApplication, QMainWindow
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor, QWebEngineProfile, QWebEnginePage
+    from PyQt6.QtCore import QUrl, QLoggingCategory
+
+    QLoggingCategory("qt.webenginecontext").setFilterRules("*.info=false")
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"--enable-logging --log-level=3"
+
+    url = auth_data['Details']['WebUrl']
+
+    class QuietWebEnginePage(QWebEnginePage):
+        #js messages spam the console for no reason
+        def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+            return
+
+    class RequestInterceptor(QWebEngineUrlRequestInterceptor):
+        def __init__(self):
+            super().__init__()
+            self.token = ''
+        def interceptRequest(self, info):
+            url_str = info.requestUrl().toString()
+            if "verify-api.proton.me/captcha/v1/api/bg" in url_str:
+                # This URL has the token we need
+                self.token = get_token_from_url(url_str)
+            if "verify-api.proton.me/captcha/v1/api/finalize" in url_str:
+                # This URL is when the CAPTCHA is solved, we can quit the app
+                QApplication.instance().quit()
+
+    class BrowserWindow(QMainWindow):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle("OAuth2 Login")
+            self.resize(800, 600)
+            self.browser = QWebEngineView()
+            self.browser.setPage(QuietWebEnginePage(self.browser))
+            self.setCentralWidget(self.browser)
+            self.browser.load(QUrl(url))
+            self.show()
+
+    webapp = QApplication(sys.argv)
+    interceptor = RequestInterceptor()
+    QWebEngineProfile.defaultProfile().setUrlRequestInterceptor(interceptor)
+    window = BrowserWindow()
+    webapp.exec()
+
+    return interceptor.token
 
 @dataclass
 class CaptchaConfig:
@@ -34,12 +91,15 @@ class CaptchaConfig:
         Attributes:
             AUTO: Attempt fully automatic CAPTCHA solution. It does not guarantee the result, sometimes it is necessary to run several times.
             MANUAL: Manual CAPTCHA solution. Requires additional actions from you, read more: https://github.com/opulentfox-29/protonmail-api-client?tab=readme-ov-file#solve-captcha
+            PYQT: Use PyQt6 web browser to solve CAPTCHA.
         """
         AUTO = 'auto'
         MANUAL = 'manual'
+        PYQT = 'pyqt'
 
     type: CaptchaType = CaptchaType.AUTO
     function_for_manual: Callable = default_function_for_manual_solve_captcha
+    function_for_pyqt: Callable = default_function_for_pyqt_solve_captcha
 
 
 @dataclass

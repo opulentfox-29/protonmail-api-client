@@ -4,6 +4,7 @@ bcrypt
 cryptography
 numpy
 opencv-python
+PyQt6-WebEngine
 requests
 requests-toolbelt
 typing_extensions

@@ -120,7 +120,10 @@ print(new_messages)
 ### Solve CAPTCHA
 Instructions to solve CAPTCHA:
 1. At the moment automatic CAPTCHA solving is already implemented (used by default), it uses `cv2` and `NumPy`. Sometimes `CantSolveImageCaptcha` exception may occur, it means you encountered a complex image, just try to log in again.
-2. You can use manual CAPTCHA solving:
+2. You can use PyQt web browser to manually solve CAPTCHA:
+   1. Login with `proton.login(username, password, captcha_config=CaptchaConfig(type=CaptchaConfig.CaptchaType.PYQT))`
+   2. A browser window will appear with a CAPTCHA. Simply solve the CAPTCHA.
+3. You can also use your own browser for manual CAPTCHA solving:
    1. Login with `proton.login(username, password, captcha_config=CaptchaConfig(type=CaptchaConfig.CaptchaType.MANUAL))`
    2. You will see a url in the console, copy it.
    3. Open a new browser tab in incognito mode.
