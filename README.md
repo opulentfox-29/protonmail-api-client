@@ -121,20 +121,22 @@ print(new_messages)
 Instructions to solve CAPTCHA:
 1. At the moment automatic CAPTCHA solving is already implemented (used by default), it uses `cv2` and `NumPy`. Sometimes `CantSolveImageCaptcha` exception may occur, it means you encountered a complex image, just try to log in again.
 2. You can use PyQt web browser to manually solve CAPTCHA:
-   1. Login with `proton.login(username, password, captcha_config=CaptchaConfig(type=CaptchaConfig.CaptchaType.PYQT))`
-   2. A browser window will appear with a CAPTCHA. Simply solve the CAPTCHA.
+   1. Add `from protonmail.models import CaptchaConfig` to your imports.
+   2. Login with `proton.login(username, password, captcha_config=CaptchaConfig(type=CaptchaConfig.CaptchaType.PYQT))`
+   3. A browser window will appear with a CAPTCHA. Simply solve the CAPTCHA.
 3. You can also use your own browser for manual CAPTCHA solving:
-   1. Login with `proton.login(username, password, captcha_config=CaptchaConfig(type=CaptchaConfig.CaptchaType.MANUAL))`
-   2. You will see a url in the console, copy it.
-   3. Open a new browser tab in incognito mode.
-   4. Open the "DevTools" panel (press `F12`)
-   5. Go to the "Network" tab.
-   6. Enable network logging (press `CTRL + E`)
-   7. Follow the copied url (from point 2.2)
-   8. Solve the CAPTCHA.
-   9. Find the `init` request in the "Network" tab and open it.
-   10. In the "Preview" tab of the request, copy the token value.
-   11. Paste the token into the python console.
+   1. Add `from protonmail.models import CaptchaConfig` to your imports.
+   2. Login with `proton.login(username, password, captcha_config=CaptchaConfig(type=CaptchaConfig.CaptchaType.MANUAL))`
+   3. You will see a url in the console, copy it.
+   4. Open a new browser tab in incognito mode.
+   5. Open the "DevTools" panel (press `F12`)
+   6. Go to the "Network" tab.
+   7. Enable network logging (press `CTRL + E`)
+   8. Follow the copied url (from point 2.2)
+   9. Solve the CAPTCHA.
+   10. Find the `init` request in the "Network" tab and open it.
+   11. In the "Preview" tab of the request, copy the token value.
+   12. Paste the token into the python console.
 
 ![CAPTCHA token interception](assets/captcha-token-interception.png)
 
