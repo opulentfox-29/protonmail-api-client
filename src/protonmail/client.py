@@ -335,7 +335,7 @@ class ProtonMail:
                 'type': 1 if bcc_info['RecipientType'] == 1 else 32,
                 'public_key': bcc_info['Keys'][0]['PublicKey'] if bcc_info['Keys'] else None,
             })
-        draft = self.create_draft(message, decrypt_body=False, account_address=account_address)
+        draft = self.create_draft(message, is_html, decrypt_body=False, account_address=account_address)
         uploaded_attachments = self._upload_attachments(message.attachments, draft.id)
         multipart = self._multipart_encrypt(message, uploaded_attachments, recipients_info, is_html, delivery_time)
 
@@ -362,7 +362,7 @@ class ProtonMail:
 
         return sent_message
 
-    def create_draft(self, message: Message, decrypt_body: Optional[bool] = True, account_address: Optional[AccountAddress] = None) -> Message:
+    def create_draft(self, message: Message, is_html: bool = True, decrypt_body: Optional[bool] = True, account_address: Optional[AccountAddress] = None) -> Message:
         """Create the draft."""
         if not account_address:
             account_address = self.account_addresses[0]
@@ -400,7 +400,7 @@ class ProtonMail:
                 'BCCList': [],
                 'Subject': message.subject,
                 'Attachments': [],
-                'MIMEType': 'text/html',
+                'MIMEType': 'text/html' if is_html else 'text/plain',
                 'RightToLeft': 0,
                 'Sender': {
                     'Name': account_address.name,
