@@ -1073,6 +1073,8 @@ class ProtonMail:
                 data = quopri.encodestring(data.encode('utf-8')).decode('utf-8')
 
             msg_plain.set_payload(data, 'utf-8')
+            if not message.attachments:
+                return msg_plain.as_string().replace('MIME-Version: 1.0\n', '')
             msg_mixed.attach(msg_plain)
 
         else:
