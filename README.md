@@ -70,9 +70,10 @@ new_message = proton.create_message(
     attachments=[img_attachment, pdf_attachment],
     external_id="some-message-id-header-if-you-want-to-specify",
     in_reply_to="message-id-of-the-mail-to-reply-to",
+    plain_transfer_encoding="quoted-printable", # Choose out of '8bit', 'base64' and 'quoted-printable' for plain text emails. Default is 'quoted-printable'
 )
 
-sent_message = proton.send_message(new_message)
+sent_message = proton.send_message(new_message, is_html=True) # for sending plain text, make it false.
 
 # Wait for new message
 new_message = proton.wait_for_new_message(interval=1, timeout=60, rise_timeout=False, read_message=True)

@@ -224,6 +224,7 @@ class Message:
     attachments: list[Attachment] = field(default_factory=list)
     external_id: str = ''
     in_reply_to: str = ''
+    plain_transfer_encoding: str = field(default='quoted-printable')
     extra: dict = field(default_factory=dict)
 
     def __str__(self):

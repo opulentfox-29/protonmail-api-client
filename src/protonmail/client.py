@@ -4,6 +4,7 @@ import asyncio
 import json
 import mimetypes
 import pickle
+import quopri
 import re
 import string
 import time
@@ -1058,14 +1059,22 @@ class ProtonMail:
         """Converting an unencrypted message into a multipart mime."""
         data = message.body
         msg_mixed = MIMEMultipart('mixed')
-
         msg_plain = MIMEText('', _subtype='plain')
-        msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
 
         if not is_html:
-            data = '=\n'.join([data[i:i + 76] for i in range(0, len(data), 76)])
+            if message.plain_transfer_encoding == '8bit':
+                msg_plain.replace_header('Content-Transfer-Encoding', '8bit')
+            elif message.plain_transfer_encoding == 'base64':
+                msg_plain.replace_header('Content-Transfer-Encoding', 'base64')
+                data = b64encode(data.encode()).decode()
+                data = '\n'.join([data[i:i + 76] for i in range(0, len(data), 76)])
+            else: # default is 'quoted-printable'
+                msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
+                data = quopri.encodestring(data.encode('utf-8')).decode('utf-8')
+
             msg_plain.set_payload(data, 'utf-8')
             msg_mixed.attach(msg_plain)
+
         else:
             msg_plain.set_payload('', 'utf-8')
             data_base64 = b64encode(data.encode()).decode()
