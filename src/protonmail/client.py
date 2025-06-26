@@ -1065,28 +1065,24 @@ class ProtonMail:
         if not is_html:
             data = '=\n'.join([data[i:i + 76] for i in range(0, len(data), 76)])
             msg_plain.set_payload(data, 'utf-8')
-
             msg_mixed.attach(msg_plain)
-            message = msg_mixed.as_string().replace('MIME-Version: 1.0\n', '')
-            return message
+        else:
+            msg_plain.set_payload('', 'utf-8')
+            data_base64 = b64encode(data.encode()).decode()
+            data_base64 = '\n'.join([data_base64[i:i+76] for i in range(0, len(data_base64), 76)])
 
-        msg_plain.set_payload('', 'utf-8')
+            msg_base = MIMEText('', _subtype='html')
+            msg_base.replace_header('Content-Transfer-Encoding', 'base64')
+            msg_base.set_payload(data_base64, 'utf-8')
 
-        data_base64 = b64encode(data.encode()).decode()
-        data_base64 = '\n'.join([data_base64[i:i+76] for i in range(0, len(data_base64), 76)])
+            msg_related = MIMEMultipart('related')
+            msg_related.attach(msg_base)
 
-        msg_base = MIMEText('', _subtype='html')
-        msg_base.replace_header('Content-Transfer-Encoding', 'base64')
-        msg_base.set_payload(data_base64, 'utf-8')
+            msg_alt = MIMEMultipart('alternative')
+            msg_alt.attach(msg_plain)
+            msg_alt.attach(msg_related)
 
-        msg_related = MIMEMultipart('related')
-        msg_related.attach(msg_base)
-
-        msg_alt = MIMEMultipart('alternative')
-        msg_alt.attach(msg_plain)
-        msg_alt.attach(msg_related)
-
-        msg_mixed.attach(msg_alt)
+            msg_mixed.attach(msg_alt)
 
         for attachment in message.attachments:
             main_type, sub_type = attachment.type.split('/')
