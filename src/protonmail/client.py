@@ -4,6 +4,7 @@ import asyncio
 import json
 import mimetypes
 import pickle
+import quopri
 import re
 import string
 import time
@@ -32,7 +33,6 @@ from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError
     CantSolveImageCaptcha, InvalidCaptcha
 from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType, CaptchaConfig
 from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
-from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
 from .utils.pysrp import User
 from .logger import Logger
 from .pgp import PGP
@@ -77,7 +77,7 @@ class ProtonMail:
         :type getter_2fa_code: ``callable``
         :param login_type: Type for login, dev - simple login, fewer requests but maybe often CAPTCHA, web - more requests, CAPTCHA like in web. default: WEB
         :type login_type: ``Enum: LoginType``
-        :param captcha_config: Config for CAPTCHA resolver (auto or manual). Default: auto. More: https://github.com/opulentfox-29/protonmail-api-client?tab=readme-ov-file#solve-captcha
+        :param captcha_config: Config for CAPTCHA resolver (auto, manual or pyqt). Default: auto. More: https://github.com/opulentfox-29/protonmail-api-client?tab=readme-ov-file#solve-captcha
         :type login_type: ``CaptchaConfig``
         :returns: :py:obj:`None`
         """
@@ -335,7 +335,7 @@ class ProtonMail:
                 'type': 1 if bcc_info['RecipientType'] == 1 else 32,
                 'public_key': bcc_info['Keys'][0]['PublicKey'] if bcc_info['Keys'] else None,
             })
-        draft = self.create_draft(message, decrypt_body=False, account_address=account_address)
+        draft = self.create_draft(message, is_html, decrypt_body=False, account_address=account_address)
         uploaded_attachments = self._upload_attachments(message.attachments, draft.id)
         multipart = self._multipart_encrypt(message, uploaded_attachments, recipients_info, is_html, delivery_time)
 
@@ -362,7 +362,7 @@ class ProtonMail:
 
         return sent_message
 
-    def create_draft(self, message: Message, decrypt_body: Optional[bool] = True, account_address: Optional[AccountAddress] = None) -> Message:
+    def create_draft(self, message: Message, is_html: bool = True, decrypt_body: Optional[bool] = True, account_address: Optional[AccountAddress] = None) -> Message:
         """Create the draft."""
         if not account_address:
             account_address = self.account_addresses[0]
@@ -400,7 +400,7 @@ class ProtonMail:
                 'BCCList': [],
                 'Subject': message.subject,
                 'Attachments': [],
-                'MIMEType': 'text/html',
+                'MIMEType': 'text/html' if is_html else 'text/plain',
                 'RightToLeft': 0,
                 'Sender': {
                     'Name': account_address.name,
@@ -1059,35 +1059,41 @@ class ProtonMail:
         """Converting an unencrypted message into a multipart mime."""
         data = message.body
         msg_mixed = MIMEMultipart('mixed')
-
         msg_plain = MIMEText('', _subtype='plain')
-        msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
 
         if not is_html:
-            data = '=\n'.join([data[i:i + 76] for i in range(0, len(data), 76)])
+            if message.plain_transfer_encoding == '8bit':
+                msg_plain.replace_header('Content-Transfer-Encoding', '8bit')
+            elif message.plain_transfer_encoding == 'base64':
+                msg_plain.replace_header('Content-Transfer-Encoding', 'base64')
+                data = b64encode(data.encode()).decode()
+                data = '\n'.join([data[i:i + 76] for i in range(0, len(data), 76)])
+            else: # default is 'quoted-printable'
+                msg_plain.replace_header('Content-Transfer-Encoding', 'quoted-printable')
+                data = quopri.encodestring(data.encode('utf-8')).decode('utf-8')
+
             msg_plain.set_payload(data, 'utf-8')
-
+            if not message.attachments:
+                return msg_plain.as_string().replace('MIME-Version: 1.0\n', '')
             msg_mixed.attach(msg_plain)
-            message = msg_mixed.as_string().replace('MIME-Version: 1.0\n', '')
-            return message
 
-        msg_plain.set_payload('', 'utf-8')
+        else:
+            msg_plain.set_payload('', 'utf-8')
+            data_base64 = b64encode(data.encode()).decode()
+            data_base64 = '\n'.join([data_base64[i:i+76] for i in range(0, len(data_base64), 76)])
 
-        data_base64 = b64encode(data.encode()).decode()
-        data_base64 = '\n'.join([data_base64[i:i+76] for i in range(0, len(data_base64), 76)])
+            msg_base = MIMEText('', _subtype='html')
+            msg_base.replace_header('Content-Transfer-Encoding', 'base64')
+            msg_base.set_payload(data_base64, 'utf-8')
 
-        msg_base = MIMEText('', _subtype='html')
-        msg_base.replace_header('Content-Transfer-Encoding', 'base64')
-        msg_base.set_payload(data_base64, 'utf-8')
+            msg_related = MIMEMultipart('related')
+            msg_related.attach(msg_base)
 
-        msg_related = MIMEMultipart('related')
-        msg_related.attach(msg_base)
+            msg_alt = MIMEMultipart('alternative')
+            msg_alt.attach(msg_plain)
+            msg_alt.attach(msg_related)
 
-        msg_alt = MIMEMultipart('alternative')
-        msg_alt.attach(msg_plain)
-        msg_alt.attach(msg_related)
-
-        msg_mixed.attach(msg_alt)
+            msg_mixed.attach(msg_alt)
 
         for attachment in message.attachments:
             main_type, sub_type = attachment.type.split('/')
@@ -1141,6 +1147,10 @@ class ProtonMail:
         if captcha_config.type == CaptchaConfig.CaptchaType.AUTO:
             proved_token = self._captcha_auto_solving(captcha_token)
             self.logger.info("CAPTCHA auto solved")
+        elif captcha_config.type == CaptchaConfig.CaptchaType.PYQT:
+            self.logger.info("Opening a browser window to solve CAPTCHA...")
+            proved_token = captcha_config.function_for_pyqt(auth)
+            self.logger.info("CAPTCHA solved")
         else:
             proved_token = captcha_config.function_for_manual(auth)
             self.logger.info("CAPTCHA manual solved")
@@ -1151,6 +1161,9 @@ class ProtonMail:
         self.session.headers['x-pm-human-verification-token'] = hvt_token
 
     def _captcha_auto_solving(self, captcha_token: str) -> str:
+
+        from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
+
         """ Auto solve CAPTCHA. """
         params = {
             'challengeType': '2D',

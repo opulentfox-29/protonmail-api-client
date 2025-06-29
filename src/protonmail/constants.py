@@ -1,7 +1,7 @@
 """Constants."""
 
-PM_APP_VERSION_ACCOUNT = 'web-account@5.0.255.0'
-PM_APP_VERSION_MAIL = 'web-mail@5.0.66.5'
+PM_APP_VERSION_ACCOUNT = 'web-account@5.0.259.1'
+PM_APP_VERSION_MAIL = 'web-mail@5.0.68.8'
 PM_APP_VERSION_DEV = 'Other'
 API_VERSION = '4'
 SRP_LEN_BYTES = 256
@@ -14,7 +14,7 @@ DEFAULT_HEADERS = {
     'content-type': 'application/json',
     'origin': 'https://account.proton.me',
     'referer': 'https://account.proton.me/mail',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
     'x-pm-appversion': PM_APP_VERSION_ACCOUNT,
     'x-pm-apiversion': API_VERSION,
     'x-pm-locale': 'en_US',
