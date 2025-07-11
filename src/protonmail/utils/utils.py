@@ -76,6 +76,11 @@ def custom_hash(hash_class: callable, *args: int) -> int:
     return bytes_to_long(hashed.digest())
 
 
+def generate_srp_salt(length: int = 16) -> bytes: # SALT_LEN_BYTES is typically 16
+    """Generate a random salt for SRP."""
+    return long_to_bytes(get_random_of_length(length), length)
+
+
 def delete_duplicates_cookies_and_reset_domain(func):
     def wrapper(self: Self, *args, **kwargs):
         response = func(self, *args, **kwargs)

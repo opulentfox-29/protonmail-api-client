@@ -6,6 +6,8 @@ PM_APP_VERSION_DEV = 'Other'
 API_VERSION = '4'
 SRP_LEN_BYTES = 256
 SALT_LEN_BYTES = 10
+SRP_VERSION = 4 # Default SRP version, matches Proton's current practices
+SRP_MODULUS_KEY = "Modulus" # Key for accessing modulus in API responses
 
 DEFAULT_HEADERS = {
     'authority': 'account.proton.me',
@@ -24,7 +26,7 @@ urls_api = {
     'api': 'https://api.protonmail.ch/api',
     'mail': 'https://mail.proton.me/api',
     'account': 'https://account.proton.me/api',
-    'account-api': 'https://account-api.proton.me',
+    'account-api': 'https://account-api.proton.me', # For CAPTCHA and some auth related things (e.g., modulus)
     'assets': 'https://account.proton.me/assets'
 }
 

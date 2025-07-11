@@ -26,6 +26,7 @@ from .utils import (
     get_random_of_length,
     hash_password,
     long_to_bytes,
+    generate_srp_salt,
 )
 
 
@@ -41,6 +42,10 @@ def hash_k(hash_class: callable, g: int, modulus: int, width: int) -> int:
 
 
 def password_hasher(hash_class: callable, salt: bytes, password: bytes, modulus: int) -> int:
+    # Ensure salt is bytes
+    if isinstance(salt, str):
+        salt = salt.encode('utf-8')
+
     hashed_password = hash_password(
         hash_class,
         password,
@@ -67,11 +72,12 @@ def calculate_server_proof(hash_class: callable, challenge_int: int, client_proo
 
 
 class User:
-    def __init__(self, password: str, modulus_bin: bytes, g_hex: bytes = b"2"):
+    def __init__(self, password: str, modulus_bin: bytes, g_hex: bytes = b"2", srp_version: Optional[int] = None):
         self.password: bin = password.encode()
         self.hash_class = pm_hash
         self.modulus_int, self.g = get_ng(modulus_bin, g_hex)
         self.k = hash_k(self.hash_class, self.g, self.modulus_int, SRP_LEN_BYTES)
+        self.srp_version = srp_version # Store SRP version if provided
 
         self.random_int = get_random_of_length(32)
         self.challenge_int = pow(self.g, self.random_int, self.modulus_int)
@@ -79,13 +85,14 @@ class User:
         self._authenticated = False
 
         self.bytes_s = None
-        self.v = None
+        self.v = None # Stores the verifier as int
+        self.bytes_v = None # Stores the verifier as bytes
         self.client_proof = None
         self.session_key = None
         self.S = None
         self.server_challenge_int = None
         self.hashed_server_challenge = None
-        self.hashed_password = None
+        self.hashed_password = None # Stores x, the private key (hashed_password)
 
     def authenticated(self) -> bool:
         return self._authenticated
@@ -147,24 +154,44 @@ class User:
 
     def compute_v(self, bytes_s: Optional[bytes] = None) -> tuple[bytes, bytes]:
         if bytes_s is None:
-            self.bytes_s = long_to_bytes(
-                get_random_of_length(SALT_LEN_BYTES),
-                SALT_LEN_BYTES
-            )
+            self.bytes_s = generate_srp_salt()
         else:
-            self.bytes_s = bytes_s
-        self.hashed_password = password_hasher(
+            # Ensure salt is bytes
+            if isinstance(bytes_s, str):
+                self.bytes_s = bytes_s.encode('utf-8')
+            else:
+                self.bytes_s = bytes_s
+
+        self.hashed_password = password_hasher( # This is x = H(s, H(I, p))
             self.hash_class,
             self.bytes_s,
             self.password,
             self.modulus_int
         )
+        self.v = pow(self.g, self.hashed_password, self.modulus_int)
+        self.bytes_v = long_to_bytes(self.v, SRP_LEN_BYTES)
 
+        # Return salt as base64 encoded string and verifier as hex encoded string
         return (
-            self.bytes_s,
-            long_to_bytes(pow(self.g, self.hashed_password, self.modulus_int), SRP_LEN_BYTES)
+            self.bytes_s.decode('utf-8'), # Salt for AuthVerifier
+            self.bytes_v.hex() # Verifier for AuthVerifier
         )
-    
+
+    def get_srp_verifier_params(self, modulus_id: str, salt: Optional[str] = None) -> dict:
+        """
+        Generates and returns SRP salt and verifier needed for account creation.
+        :param modulus_id: The ID of the SRP modulus.
+        :param salt: Optional salt. If not provided, a new one will be generated.
+        :return: A dictionary containing 'Salt' (str) and 'Verifier' (hex str).
+        """
+        generated_salt_str, verifier_hex = self.compute_v(bytes_s=salt)
+        return {
+            "Version": self.srp_version or 4, # Default to 4 if not set during init
+            "ModulusID": modulus_id,
+            "Salt": generated_salt_str,
+            "Verifier": verifier_hex
+        }
+
     def get_ephemeral_secret(self) -> bytes:
         return long_to_bytes(self.random_int, SRP_LEN_BYTES)
 

@@ -28,12 +28,20 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels, \
-    CantSolveImageCaptcha, InvalidCaptcha
-from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType, CaptchaConfig
-from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
+from .exceptions import (
+    SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound,
+    CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels,
+    CantSolveImageCaptcha, InvalidCaptcha, RegistrationError, UsernameUnavailableError,
+    VerificationError
+)
+from .models import (
+    Attachment, Message, UserMail, Conversation, PgpPairKeys, Label,
+    AccountAddress, LoginType, CaptchaConfig, SendVerificationCodeReq,
+    TokenDestination, TokenType, CreateUserReq, AuthVerifier, UserType
+)
+from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT, SRP_MODULUS_KEY, SRP_VERSION
 from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
-from .utils.pysrp import User
+from .utils.pysrp import User as SRPUser
 from .logger import Logger
 from .pgp import PGP
 from .utils.utils import bcrypt_b64_encode, delete_duplicates_cookies_and_reset_domain
@@ -55,7 +63,7 @@ class ProtonMail:
         self.logger = Logger(logging_level, logging_func)
         self.proxy = proxy
         self.pgp = PGP()
-        self.user = None
+        self.user: Optional[SRPUser] = None # SRP User object
         self._session_path = None
         self._session_auto_save = False
         self.account_addresses: list[AccountAddress] = []
@@ -92,26 +100,22 @@ class ProtonMail:
         data = {'Username': username}
 
         info = self._post('account', 'core/v4/auth/info', json=data).json()
-        client_challenge, client_proof, spr_session = self._parse_info_before_login(info, password)
+        client_challenge, client_proof, srp_session = self._parse_info_before_login(info, password)
 
-        auth = self._post('account', 'core/v4/auth', json={
+        auth_payload = {
             'Username': username,
             'ClientEphemeral': client_challenge,
             'ClientProof': client_proof,
-            'SRPSession': spr_session,
+            'SRPSession': srp_session,
             'PersistentCookies': 1,
-        }).json()
+        }
+        auth = self._post('account', 'core/v4/auth', json=auth_payload).json()
 
         if auth['Code'] == 9001:  # Captcha
-            self._captcha_processing(auth, captcha_config)
+            self._captcha_processing(auth, captcha_config, auth_payload, 'account', 'core/v4/auth')
+            # Recapture auth after captcha
+            auth = self._post('account', 'core/v4/auth', json=auth_payload).json()
 
-            auth = self._post('account', 'core/v4/auth', json={
-                'Username': username,
-                'ClientEphemeral': client_challenge,
-                'ClientProof': client_proof,
-                'SRPSession': spr_session,
-                'PersistentCookies': 1,
-            }).json()
 
         if self._login_process(auth):
             self.logger.info("login success", "green")
@@ -1114,22 +1118,35 @@ class ProtonMail:
         return anonym_session_data
 
     def _parse_info_before_login(self, info, password: str) -> tuple[str, str, str]:
-        verified = self.pgp.message(info['Modulus'])
+        modulus_data = self._get_modulus().json()
+        modulus_armored = modulus_data['Modulus']
+        modulus_id = modulus_data['ModulusID']
+
+        verified = self.pgp.message(modulus_armored) # Assuming PGP verification is for the modulus itself
         modulus = b64decode(verified.message)
+
         server_challenge = b64decode(info['ServerEphemeral'])
         salt = b64decode(info['Salt'])
-        spr_session = info['SRPSession']
+        srp_session = info['SRPSession']
+        srp_version = info.get('Version', SRP_VERSION) # Use default if not provided
 
-        self.user = User(password, modulus)
+        self.user = SRPUser(password, modulus, srp_version=srp_version)
         client_challenge = b64encode(self.user.get_challenge()).decode('utf8')
         client_proof = b64encode(self.user.process_challenge(salt, server_challenge)).decode('utf8')
 
-        return client_challenge, client_proof, spr_session
+        return client_challenge, client_proof, srp_session
 
-    def _captcha_processing(self, auth: dict, captcha_config: CaptchaConfig):
+    def _captcha_processing(self, auth_response: dict, captcha_config: CaptchaConfig, original_payload: dict, domain: str, endpoint: str):
         """ Processing CAPTCHA logic. """
         self.logger.warning("Got CAPTCHA")
-        captcha_token = auth['Details']['HumanVerificationToken']
+        captcha_token = auth_response['Details']['HumanVerificationToken']
+        # Clean up previous human verification headers if any
+        if 'x-pm-human-verification-token' in self.session.headers:
+            del self.session.headers['x-pm-human-verification-token']
+        if 'x-pm-human-verification-token-type' in self.session.headers:
+            del self.session.headers['x-pm-human-verification-token-type']
+
+
         params = {
             'Token': captcha_token,
             'ForceWebMessaging': 1,
@@ -1142,13 +1159,21 @@ class ProtonMail:
             proved_token = self._captcha_auto_solving(captcha_token)
             self.logger.info("CAPTCHA auto solved")
         else:
-            proved_token = captcha_config.function_for_manual(auth)
+            proved_token = captcha_config.function_for_manual(auth_response) # Pass full auth response
             self.logger.info("CAPTCHA manual solved")
 
         hvt_token = f'{captcha_token}:{sub_token}{proved_token}'
 
         self.session.headers['x-pm-human-verification-token-type'] = 'captcha'
         self.session.headers['x-pm-human-verification-token'] = hvt_token
+
+        # Retry the original request that triggered captcha
+        # response_after_captcha = self._post(domain, endpoint, json=original_payload).json()
+        # if response_after_captcha['Code'] != 1000 and response_after_captcha['Code'] != 1001 : # Check for success codes
+        #     raise InvalidCaptcha(f"Failed after CAPTCHA: {response_after_captcha.get('Error', 'Unknown error')}")
+        # return response_after_captcha
+        # Note: The calling function will retry the request. This function only sets the headers.
+
 
     def _captcha_auto_solving(self, captcha_token: str) -> str:
         """ Auto solve CAPTCHA. """
@@ -1575,3 +1600,160 @@ class ProtonMail:
 
     def __get_salts(self) -> dict:
         return self._get('account', 'core/v4/keys/salts').json()
+
+    def _get_modulus(self) -> Response:
+        return self._get('account', 'core/v4/auth/modulus')
+
+    def get_username_available(self, username: str) -> bool:
+        """
+        Check if a username is available for registration.
+
+        :param username: The username to check.
+        :type username: str
+        :return: True if the username is available, False otherwise.
+        :rtype: bool
+        """
+        params = {'Name': username}
+        response = self._get('account', 'core/v4/users/available', params=params)
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('Code') == 1000:
+                return True
+        # Consider other codes or errors as unavailable or error states
+        return False
+
+    def send_verification_code(self, username: str, email_address: str) -> None:
+        """
+        Send a verification code to the specified email address for account registration.
+
+        :param username: The desired username for the new account.
+        :type username: str
+        :param email_address: The email address to send the verification code to.
+        :type email_address: str
+        :raises VerificationError: If sending the verification code fails.
+        """
+        self.session.headers['x-pm-appversion'] = PM_APP_VERSION_ACCOUNT # Important for registration APIs
+
+        payload = SendVerificationCodeReq(
+            Username=username,
+            Type=TokenType.EMAIL,
+            Destination=TokenDestination(Address=email_address)
+        ).to_dict()
+
+        response = self._post('account', 'core/v4/users/code', json=payload)
+        json_response = response.json()
+
+        if json_response.get('Code') != 1000:
+            error_message = json_response.get('Error', 'Failed to send verification code.')
+            self.logger.error(f"Send verification code failed: {error_message}")
+            if json_response.get('Code') == 12102: # Specific code for username unavailable
+                 raise UsernameUnavailableError(f"Username '{username}' is not available. {error_message}")
+            raise VerificationError(error_message)
+        self.logger.info(f"Verification code sent to {email_address} for username {username}")
+
+
+    def create_user(
+        self,
+        username: str,
+        password: str,
+        verification_email: str, # The email where the code was sent
+        verification_code: str,
+        domain: str = "proton.me",
+        captcha_config: CaptchaConfig = CaptchaConfig()
+    ) -> UserMail:
+        """
+        Create a new ProtonMail user account.
+
+        :param username: The desired username.
+        :param password: The desired password.
+        :param verification_email: The email address used for verification.
+        :param verification_code: The verification code received via email.
+        :param domain: The domain for the new email address (e.g., "proton.me").
+        :param captcha_config: Configuration for handling CAPTCHA if encountered.
+        :return: UserMail object representing the newly created user.
+        :raises RegistrationError: If account creation fails.
+        :raises InvalidCaptcha: If CAPTCHA solving fails.
+        :raises UsernameUnavailableError: If the username is already taken.
+        """
+        self.session.headers['x-pm-appversion'] = PM_APP_VERSION_ACCOUNT # Important for registration APIs
+
+        # 1. Get Modulus
+        modulus_resp = self._get_modulus().json()
+        modulus_armored = modulus_resp['Modulus']
+        modulus_id = modulus_resp['ModulusID']
+        srp_version = modulus_resp.get('Version', SRP_VERSION)
+
+        # Verify and decode modulus
+        verified_modulus_pgp = self.pgp.message(modulus_armored)
+        modulus_bytes = b64decode(verified_modulus_pgp.message)
+
+        # 2. Generate SRP Salt and Verifier
+        srp_user = SRPUser(password, modulus_bytes, srp_version=srp_version)
+        srp_params = srp_user.get_srp_verifier_params(modulus_id=modulus_id)
+
+        auth_verifier = AuthVerifier(
+            Version=srp_params["Version"],
+            ModulusID=srp_params["ModulusID"],
+            Salt=srp_params["Salt"],
+            Verifier=srp_params["Verifier"]
+        )
+
+        # 3. Construct CreateUserReq payload
+        create_user_payload = CreateUserReq(
+            Type=UserType.MAIL,
+            Username=username,
+            Domain=domain,
+            Auth=auth_verifier,
+            Token=verification_code, # This is the code from email
+            TokenType=TokenType.EMAIL # Assuming email verification for now
+        ).to_dict()
+
+        # Add HumanVerificationDetails if available from previous CAPTCHA attempt (e.g. during send_verification_code)
+        # This part is tricky as CAPTCHA might be required for send_verification_code OR create_user
+        # For now, we assume CAPTCHA is handled per request if needed.
+
+        # 4. Attempt to create user
+        response = self._post('account', 'core/v4/users', json=create_user_payload)
+        json_response = response.json()
+
+        # 5. Handle CAPTCHA if required
+        if json_response.get('Code') == 9001: # CAPTCHA required
+            self.logger.warning("CAPTCHA required for user creation.")
+            try:
+                # The _captcha_processing method now expects the original payload and endpoint
+                self._captcha_processing(json_response, captcha_config, create_user_payload, 'account', 'core/v4/users')
+                # Retry user creation after CAPTCHA headers are set
+                response = self._post('account', 'core/v4/users', json=create_user_payload)
+                json_response = response.json()
+            except InvalidCaptcha as e:
+                self.logger.error(f"CAPTCHA handling failed during registration: {e}")
+                raise
+            finally:
+                # Clean up human verification headers
+                if 'x-pm-human-verification-token' in self.session.headers:
+                    del self.session.headers['x-pm-human-verification-token']
+                if 'x-pm-human-verification-token-type' in self.session.headers:
+                    del self.session.headers['x-pm-human-verification-token-type']
+
+
+        # 6. Process final response
+        if json_response.get('Code') != 1000:
+            error_message = json_response.get('Error', 'Failed to create user.')
+            self.logger.error(f"User creation failed: {error_message} (Code: {json_response.get('Code')})")
+            if json_response.get('Code') == 12102: # Username unavailable
+                 raise UsernameUnavailableError(f"Username '{username}' is not available. {error_message}")
+            elif json_response.get('Code') == 12106: # Invalid verification token
+                raise VerificationError(f"Invalid verification code. {error_message}")
+            raise RegistrationError(error_message)
+
+        self.logger.info(f"User {username}@{domain} created successfully.")
+        # The response for successful user creation might not be a full UserMail object
+        # but might contain user ID or other details.
+        # For now, returning a simple UserMail object.
+        # The actual API might require a login after registration to get full user details.
+        created_user_details = json_response.get("User", {})
+        return UserMail(
+            name=username,
+            address=f"{username}@{domain}",
+            extra=created_user_details
+        )

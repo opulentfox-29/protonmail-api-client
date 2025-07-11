@@ -45,3 +45,23 @@ class CantSolveImageCaptcha(Exception):
 
 class InvalidCaptcha(Exception):
     """Error when solved CAPTCHA, but something wrong"""
+
+
+class ProtonMailException(Exception):
+    """Base exception for ProtonMail API client errors."""
+    pass
+
+
+class RegistrationError(ProtonMailException):
+    """Raised when account registration fails for a general reason."""
+    pass
+
+
+class UsernameUnavailableError(RegistrationError):
+    """Raised when a username is unavailable during registration."""
+    pass
+
+
+class VerificationError(RegistrationError):
+    """Raised when verification (e.g., email or SMS code) fails during registration."""
+    pass
