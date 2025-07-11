@@ -9,8 +9,8 @@ from Crypto.Cipher import AES
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pgpy import PGPMessage, PGPKey
 
-from protonmail.exceptions import NoKeysForDecryptThisMessage
-from protonmail.models import PgpPairKeys
+from .exceptions import NoKeysForDecryptThisMessage
+from .models import PgpPairKeys
 
 
 warnings.filterwarnings("ignore", module="pgpy")  # ignore deprecation warnings for pgpy

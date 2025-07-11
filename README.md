@@ -98,6 +98,93 @@ proton.get_all_sessions()
 proton.revoke_all_sessions()
 ```
 
+## Account Registration
+
+This client now supports account registration. Here's a typical workflow:
+
+```python
+from protonmail import ProtonMail, UserType, TokenType, CaptchaConfig
+from protonmail.exceptions import UsernameUnavailableError, VerificationError, RegistrationError, InvalidCaptcha
+
+# Initialize the client
+proton = ProtonMail()
+
+new_username = "mybrandnewuser"
+new_password = "SecurePassword123!"
+verification_email = "my-recovery-email@example.com" # Email to receive verification code
+proton_domain = "proton.me" # Or "protonmail.com", etc.
+
+# 1. Check if username is available
+try:
+    if not proton.get_username_available(new_username):
+        print(f"Username '{new_username}' is not available.")
+        # exit or handle
+    else:
+        print(f"Username '{new_username}' is available.")
+except Exception as e:
+    print(f"Error checking username availability: {e}")
+    # exit or handle
+
+# 2. Send verification code to an external email address
+try:
+    proton.send_verification_code(new_username, verification_email)
+    print(f"Verification code sent to {verification_email} for username {new_username}.")
+except UsernameUnavailableError:
+    print(f"Username '{new_username}' became unavailable.")
+    # exit or handle
+except VerificationError as e:
+    print(f"Failed to send verification code: {e}")
+    # exit or handle
+except Exception as e:
+    print(f"An unexpected error occurred while sending verification code: {e}")
+    # exit or handle
+
+# 3. Get the verification code from the user (e.g., via input)
+verification_code = input(f"Enter the verification code sent to {verification_email}: ")
+
+# 4. Create the user account
+try:
+    # Configure CAPTCHA handling if needed (e.g., for manual solving)
+    # captcha_config = CaptchaConfig(type=CaptchaConfig.CaptchaType.MANUAL)
+    # For auto-solving (default):
+    captcha_config = CaptchaConfig(type=CaptchaConfig.CaptchaType.AUTO)
+
+    newly_created_user = proton.create_user(
+        username=new_username,
+        password=new_password,
+        verification_email=verification_email, # Currently not strictly used by API but good for context
+        verification_code=verification_code,
+        domain=proton_domain,
+        captcha_config=captcha_config
+    )
+    print(f"Account created successfully: {newly_created_user.address}")
+
+    # You can now log in with the new account
+    # proton.login(newly_created_user.address, new_password)
+    # print("Logged in with new account.")
+    # proton.save_session(f'{new_username}_session.pickle')
+
+except UsernameUnavailableError:
+    print(f"Username '{new_username}' became unavailable before creation.")
+except VerificationError as e:
+    print(f"Verification failed during user creation: {e}")
+except InvalidCaptcha as e:
+    print(f"CAPTCHA challenge failed: {e}")
+    print("If using AUTO CAPTCHA, you might need to retry or use MANUAL.")
+except RegistrationError as e:
+    print(f"Account registration failed: {e}")
+except Exception as e:
+    print(f"An unexpected error occurred during user creation: {e}")
+
+```
+
+**Important Notes on Registration:**
+- **CAPTCHA:** Account creation often requires solving a CAPTCHA. The `create_user` method will attempt to handle this automatically if `CaptchaConfig.CaptchaType.AUTO` is used (default for `create_user`). If auto-solving fails, or if you prefer manual solving, you can pass `CaptchaConfig(type=CaptchaConfig.CaptchaType.MANUAL)` to `create_user` and follow the manual CAPTCHA instructions (see below).
+- **Verification:** Currently, only email-based verification is shown. SMS verification might have a similar flow but would use `TokenType.SMS`.
+- **API Rate Limits:** Be mindful of API rate limits when attempting registration, especially automated retries.
+- **ProtonMail Terms of Service:** Always ensure your use of the API complies with ProtonMail's Terms of Service. Automated account creation might be restricted.
+
+
 ### event polling
 Event polling. Polling ends in 3 cases:
 1. Callback returns not `None`.

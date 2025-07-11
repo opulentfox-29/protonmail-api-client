@@ -60,6 +60,72 @@ class UserMail:
         """
         return asdict(self)
 
+
+class TokenType(Enum):
+    """Token type for verification."""
+    EMAIL = "email"
+    SMS = "sms"
+
+
+@dataclass
+class TokenDestination:
+    """Destination for verification token."""
+    Address: Optional[str] = None
+    Phone: Optional[str] = None
+
+    def to_dict(self) -> dict[str, any]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+@dataclass
+class SendVerificationCodeReq:
+    """Request to send a verification code."""
+    Username: str
+    Type: TokenType
+    Destination: TokenDestination
+
+    def to_dict(self) -> dict[str, any]:
+        data = asdict(self)
+        data['Type'] = self.Type.value
+        data['Destination'] = self.Destination.to_dict()
+        return data
+
+
+class UserType(Enum):
+    """Type of user account."""
+    MAIL = 1
+    VPN = 2
+
+
+@dataclass
+class AuthVerifier:
+    """SRP verifier for account creation."""
+    Version: int
+    ModulusID: str
+    Salt: str
+    Verifier: str
+
+    def to_dict(self) -> dict[str, any]:
+        return asdict(self)
+
+
+@dataclass
+class CreateUserReq:
+    """Request to create a new user."""
+    Type: UserType
+    Username: str
+    Domain: str # Used if Type is MAIL
+    Auth: AuthVerifier
+    Token: str # Verification code from email/SMS
+    TokenType: TokenType # To indicate which type of token is being provided
+
+    def to_dict(self) -> dict[str, any]:
+        data = asdict(self)
+        data['Type'] = self.Type.value
+        data['TokenType'] = self.TokenType.value
+        data['Auth'] = self.Auth.to_dict()
+        return data
+
 @dataclass
 class AccountAddress:
     """One user can have many addresses."""
