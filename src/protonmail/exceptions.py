@@ -45,3 +45,6 @@ class CantSolveImageCaptcha(Exception):
 
 class InvalidCaptcha(Exception):
     """Error when solved CAPTCHA, but something wrong"""
+
+class LoginError(Exception):
+    """General error during login, when api error code is not familiar"""
