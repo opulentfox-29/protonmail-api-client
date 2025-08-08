@@ -28,8 +28,9 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels, \
-    CantSolveImageCaptcha, InvalidCaptcha
+from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, \
+    CantSetLabel, CantUnsetLabel, CantGetLabels, \
+    CantSolveImageCaptcha, InvalidCaptcha, LoginError, AccountAbuseSuspended
 from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType, CaptchaConfig
 from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
 from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
@@ -1204,6 +1205,10 @@ class ProtonMail:
                 raise InvalidCaptcha(auth['Error'])
             if auth["Code"] == 2028:
                 raise ConnectionRefusedError(f"Too many recent logins: {auth.get('Error')}")
+            if auth["Code"] == 10003:
+                raise AccountAbuseSuspended(f'{auth.get("Error")}')
+            if auth.get('Error'):
+                raise LoginError(auth['Error'])
 
         self.user.verify_session(b64decode(auth['ServerProof']))
 
