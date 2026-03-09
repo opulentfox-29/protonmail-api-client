@@ -45,3 +45,15 @@ class CantSolveImageCaptcha(Exception):
 
 class InvalidCaptcha(Exception):
     """Error when solved CAPTCHA, but something wrong"""
+
+class AccountAbuseSuspended(Exception):
+    """This account has been suspended by an automated anti-abuse system"""
+
+class CapchaValidationFailed(Exception):
+    """Error happens when capcha validation is logically outdated and fails with non-temporary error"""
+
+class InactiveAccountDeleted(Exception):
+    """Account is no longer available due to inactivity"""
+
+class LoginError(Exception):
+    """General error during login, when api error code is not familiar"""
