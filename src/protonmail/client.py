@@ -28,8 +28,9 @@ from aiohttp import ClientSession, TCPConnector
 from requests_toolbelt import MultipartEncoder
 from tqdm.asyncio import tqdm_asyncio
 
-from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, CantSetLabel, CantUnsetLabel, CantGetLabels, \
-    CantSolveImageCaptcha, InvalidCaptcha
+from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, \
+    CantSetLabel, CantUnsetLabel, CantGetLabels, \
+    CantSolveImageCaptcha, InvalidCaptcha, LoginError, AccountAbuseSuspended, InactiveAccountDeleted, CapchaValidationFailed
 from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType, CaptchaConfig
 from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
 from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
@@ -187,7 +188,10 @@ class ProtonMail:
         :returns: :py:obj:`list[Message]`
         """
         label_id = label_or_id.id if isinstance(label_or_id, Label) else label_or_id
-        count_page = ceil(self.get_messages_count()[5]['Total'] / page_size)
+        list_for_label = next((x for x in self.get_messages_count() if x['LabelID'] == label_id), None)
+        if list_for_label is None:
+            return []
+        count_page = ceil(list_for_label['Total'] / page_size)
         args_list = [(page_num, page_size, label_id) for page_num in range(count_page)]
         messages_lists = self._async_helper(self._async_get_messages, args_list)
         messages_dict = self._flattening_lists(messages_lists)
@@ -1204,6 +1208,14 @@ class ProtonMail:
                 raise InvalidCaptcha(auth['Error'])
             if auth["Code"] == 2028:
                 raise ConnectionRefusedError(f"Too many recent logins: {auth.get('Error')}")
+            if auth["Code"] == 10003:
+                raise AccountAbuseSuspended(f'{auth.get("Error")}')
+            if auth["Code"] == 10002:
+                raise InactiveAccountDeleted(f'{auth.get("Error")}')
+            if auth["Code"] == 10013:
+                raise CapchaValidationFailed(f'{auth.get("Error")}')
+            if auth.get('Error'):
+                raise LoginError(auth['Error'])
 
         self.user.verify_session(b64decode(auth['ServerProof']))
 
