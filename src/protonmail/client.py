@@ -30,7 +30,7 @@ from tqdm.asyncio import tqdm_asyncio
 
 from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError, AddressNotFound, CantUploadAttachment, \
     CantSetLabel, CantUnsetLabel, CantGetLabels, \
-    CantSolveImageCaptcha, InvalidCaptcha, LoginError, AccountAbuseSuspended, InactiveAccountDeleted
+    CantSolveImageCaptcha, InvalidCaptcha, LoginError, AccountAbuseSuspended, InactiveAccountDeleted, CapchaValidationFailed
 from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType, CaptchaConfig
 from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
 from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
@@ -1212,6 +1212,8 @@ class ProtonMail:
                 raise AccountAbuseSuspended(f'{auth.get("Error")}')
             if auth["Code"] == 10002:
                 raise InactiveAccountDeleted(f'{auth.get("Error")}')
+            if auth["Code"] == 10013:
+                raise CapchaValidationFailed(f'{auth.get("Error")}')
             if auth.get('Error'):
                 raise LoginError(auth['Error'])
 
