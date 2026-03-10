@@ -10,23 +10,22 @@ from typing import Optional
 import cv2
 import numpy as np
 
-N_LEADING_ZEROS_REQUIRED = 13
 X_OFFSET = -27  # Puzzle offsets are static. It was found by trial and error
 Y_OFFSET = -34
 
 
-def solve_challenge(challenge: str) -> int:
+def solve_challenge(challenge: str, n_zeros: int) -> int:
     """ Solve CAPTCHA challenge. """
     curr = 0
     while True:
         input_str = f'{curr}{challenge}'
         result = hashlib.sha256(input_str.encode()).hexdigest()
 
-        j = (N_LEADING_ZEROS_REQUIRED + 3) // 4
+        j = (n_zeros + 3) // 4
         k = result[:j]
         l = int(k, 16)
 
-        if l < 2 ** (4 * j - N_LEADING_ZEROS_REQUIRED):
+        if l < 2 ** (4 * j - n_zeros):
             return curr
         else:
             curr += 1

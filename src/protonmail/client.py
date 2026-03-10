@@ -1151,8 +1151,17 @@ class ProtonMail:
         self.session.headers['x-pm-human-verification-token'] = hvt_token
 
     def _captcha_auto_solving(self, captcha_token: str) -> str:
-        """ Auto solve CAPTCHA. """
-        params = {
+        """Auto solve CAPTCHA with dedicated session and finalize step."""
+        cap_session = Session()
+        cap_session.headers.update({
+            'accept': 'application/json',
+            'content-type': 'application/json',
+            'user-agent': self.session.headers.get('user-agent', ''),
+        })
+        cap_base = 'https://account-api.proton.me/captcha/v1/api'
+
+        # Init
+        init_params = {
             'challengeType': '2D',
             'parentURL': f'https://account-api.proton.me/core/v4/captcha?Token={captcha_token}&ForceWebMessaging=1',
             'displayedLang': 'en',
@@ -1160,18 +1169,18 @@ class ProtonMail:
             'purpose': 'login',
             'token': captcha_token,
         }
-        init_data = self._get('account-api', 'captcha/v1/api/init', params=params).json()
+        init_resp = cap_session.get(f'{cap_base}/init', params=init_params)
+        init_data = init_resp.json()
 
-        params = {
-            'token': init_data['token']
-        }
-        image_captcha = self._get('account-api', 'captcha/v1/api/bg', params=params).content
+        # Get background image
+        bg_resp = cap_session.get(f'{cap_base}/bg', params={'token': init_data['token']})
 
-        puzzle_coordinates = get_captcha_puzzle_coordinates(image_captcha)
+        puzzle_coordinates = get_captcha_puzzle_coordinates(bg_resp.content)
         if puzzle_coordinates is None:
             raise CantSolveImageCaptcha("Maybe this image is hard, just retry login or use manual CAPTCHA solver")
 
-        answers = [solve_challenge(challenge) for challenge in init_data['challenges']]
+        n_zeros = init_data.get('nLeadingZerosRequired', 13)
+        answers = [solve_challenge(challenge, n_zeros) for challenge in init_data['challenges']]
 
         captcha_object = {
             'x': puzzle_coordinates[0],
@@ -1184,17 +1193,21 @@ class ProtonMail:
             'solveChallengeMs': 5000,
             'powElapsedMs': 540
         }
-        pcaptcha = json.dumps(captcha_object)
-        self.session.headers['pcaptcha'] = pcaptcha
 
-        params = {
-            'token': init_data['token'],
-            'contestId': init_data['contestId'],
-            'purpose': 'login'
-        }
-        validated = self._get('account-api', 'captcha/v1/api/validate', params=params)
+        # Validate
+        validated = cap_session.get(
+            f'{cap_base}/validate',
+            params={'token': init_data['token'], 'contestId': init_data['contestId'], 'purpose': 'login'},
+            headers={'pcaptcha': json.dumps(captcha_object)},
+        )
         if validated.status_code != 200:
             raise InvalidCaptcha(f"Validate CAPTCHA returns code: {validated.status_code}")
+
+        # Finalize
+        cap_session.get(
+            f'{cap_base}/finalize',
+            params={'contestId': init_data['contestId'], 'purpose': 'login'},
+        )
 
         return init_data['token']
 
@@ -1204,6 +1217,7 @@ class ProtonMail:
                 raise InvalidCaptcha(auth['Error'])
             if auth["Code"] == 2028:
                 raise ConnectionRefusedError(f"Too many recent logins: {auth.get('Error')}")
+            raise Exception(f"Auth failed with code {auth['Code']}: {auth.get('Error', 'unknown')}")
 
         self.user.verify_session(b64decode(auth['ServerProof']))
 
