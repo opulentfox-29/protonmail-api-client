@@ -89,7 +89,7 @@ class ProtonMail:
             self.session.headers['x-pm-appversion'] = PM_APP_VERSION_ACCOUNT
 
             anonym_session_info = self._crate_anonym_session()
-
+            self._verify_auth(anonym_session_info)
             self._get_tokens(anonym_session_info)  # Cookies for anonym user (not logged in the account yet)
 
         data = {'Username': username}
@@ -122,6 +122,7 @@ class ProtonMail:
             self.logger.error("login failure")
 
         if login_type == LoginType.DEV:
+            self._verify_auth(auth)
             self._get_tokens(auth)
 
         if auth["TwoFactor"]:
@@ -148,6 +149,7 @@ class ProtonMail:
 
             self.session.headers['x-pm-appversion'] = PM_APP_VERSION_MAIL
             fork_data = self._get('mail', f"auth/v4/sessions/forks/{response_data['Selector']}").json()
+            self._verify_auth(fork_data)
 
             self._get_tokens(fork_data)
 
@@ -1214,20 +1216,24 @@ class ProtonMail:
 
         return init_data['token']
 
-    def _login_process(self, auth: dict) -> bool:
-        if auth["Code"] not in (1000, 1001):
-            if auth["Code"] in [9001, 12087]:
-                raise InvalidCaptcha(auth['Error'])
-            if auth["Code"] == 2028:
-                raise ConnectionRefusedError(f"Too many recent logins: {auth.get('Error')}")
-            elif auth["Code"] == 10003:
-                raise AccountAbuseSuspended(f'{auth.get("Error")}')
-            elif auth["Code"] == 10002:
-                raise InactiveAccountDeleted(f'{auth.get("Error")}')
-            elif auth["Code"] == 10013:
-                raise CapchaValidationFailed(f'{auth.get("Error")}')
-            raise Exception(f"Auth failed with code {auth['Code']}: {auth.get('Error', 'unknown')}")
+    def _verify_auth(self, auth: dict):
+        if auth["Code"] in (1000, 1001):
+            return
 
+        if auth["Code"] in [9001, 12087]:
+            raise InvalidCaptcha(auth['Error'])
+        if auth["Code"] == 2028:
+            raise ConnectionRefusedError(f"Too many recent logins: {auth.get('Error')}")
+        elif auth["Code"] == 10003:
+            raise AccountAbuseSuspended(f'{auth.get("Error")}')
+        elif auth["Code"] == 10002:
+            raise InactiveAccountDeleted(f'{auth.get("Error")}')
+        elif auth["Code"] == 10013:
+            raise CapchaValidationFailed(f'{auth.get("Error")}')
+        raise Exception(f"Auth failed with code {auth['Code']}: {auth.get('Error', 'unknown')}")
+
+    def _login_process(self, auth: dict) -> bool:
+        self._verify_auth(auth)
         self.user.verify_session(b64decode(auth['ServerProof']))
 
         return self.user.authenticated()
