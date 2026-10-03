@@ -35,7 +35,7 @@ from .exceptions import SendMessageError, InvalidTwoFactorCode, LoadSessionError
     CantSolveImageCaptcha, InvalidCaptcha, LoginError, AccountAbuseSuspended, InactiveAccountDeleted, CapchaValidationFailed
 from .models import Attachment, Message, UserMail, Conversation, PgpPairKeys, Label, AccountAddress, LoginType, CaptchaConfig
 from .constants import DEFAULT_HEADERS, urls_api, PM_APP_VERSION_MAIL, PM_APP_VERSION_DEV, PM_APP_VERSION_ACCOUNT
-from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenge
+from .utils.captcha_auto_solver_utils import get_captcha_puzzle_coordinates, solve_challenges
 from .utils.pysrp import User
 from .logger import Logger
 from .pgp import PGP
@@ -1190,7 +1190,15 @@ class ProtonMail:
             'ForceWebMessaging': 1,
             'Dark': 'true',
         }
-        js_captcha = self._get('verify-api', 'core/v4/captcha', params=params).text
+        # Deliberately bypasses self._get(): its @delete_duplicates_cookies_and_reset_domain
+        # decorator strips the domain off the connect.sid cookie this page sets, which the
+        # verify-api captcha/v1/api/validate call below needs to recognize the session.
+        # 'authority' is overridden because self.session's default is account.proton.me -
+        # sending that while actually connecting to verify-api.proton.me is an internally
+        # inconsistent header a bot-detection layer can flag.
+        js_captcha = self.session.get(
+            f'{urls_api["verify-api"]}/core/v4/captcha', params=params, headers={'authority': 'verify-api.proton.me'}
+        ).text
         sub_token = self._extract_captcha_sub_token(js_captcha)
 
         if captcha_config.type == CaptchaConfig.CaptchaType.AUTO:
@@ -1209,36 +1217,45 @@ class ProtonMail:
         self.session.headers['x-pm-human-verification-token'] = hvt_token
 
     def _captcha_auto_solving(self, captcha_token: str) -> str:
-        """Auto solve CAPTCHA with dedicated session and finalize step."""
-        cap_session = Session()
-        cap_session.headers.update({
+        """Auto solve CAPTCHA. Reuses the main session so the request carries the same
+        anonymous-session auth context (cookies/authorization/x-pm-uid) the HumanVerificationToken
+        was issued under - a bare disconnected session gets 401 Unauthorized from validate()."""
+        parent_url = f'{urls_api["verify-api"]}/core/v4/captcha?Token={captcha_token}&ForceWebMessaging=1&Dark=true'
+        captcha_headers = {
             'accept': 'application/json',
-            'content-type': 'application/json',
-            'user-agent': self.session.headers.get('user-agent', ''),
-        })
+            'authority': 'verify-api.proton.me',
+            'origin': urls_api['verify-api'],
+            'referer': parent_url,
+            'sec-ch-ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+        }
         cap_base = f'{urls_api["verify-api"]}/captcha/v1/api'
 
         # Init
         init_params = {
             'challengeType': '2D',
-            'parentURL': f'{urls_api["verify-api"]}/core/v4/captcha?Token={captcha_token}&ForceWebMessaging=1&Dark=true',
+            'parentURL': parent_url,
             'displayedLang': 'en',
             'supportedLangs': 'en,en,en,en',
             'purpose': 'login',
             'token': captcha_token,
         }
-        init_resp = cap_session.get(f'{cap_base}/init', params=init_params)
+        init_resp = self.session.get(f'{cap_base}/init', params=init_params, headers=captcha_headers, timeout=15)
         init_data = init_resp.json()
 
         # Get background image
-        bg_resp = cap_session.get(f'{cap_base}/bg', params={'token': init_data['token']})
+        bg_resp = self.session.get(f'{cap_base}/bg', params={'token': init_data['token']}, headers=captcha_headers, timeout=15)
 
         puzzle_coordinates = get_captcha_puzzle_coordinates(bg_resp.content)
         if puzzle_coordinates is None:
             raise CantSolveImageCaptcha("Maybe this image is hard, just retry login or use manual CAPTCHA solver")
 
         n_zeros = init_data.get('nLeadingZerosRequired', 13)
-        answers = [solve_challenge(challenge, n_zeros) for challenge in init_data['challenges']]
+        answers, pow_elapsed_ms = solve_challenges(init_data['challenges'], n_zeros)
 
         captcha_object = {
             'x': puzzle_coordinates[0],
@@ -1248,23 +1265,27 @@ class ProtonMail:
             'pieceLoadElapsedMs': 140,
             'bgLoadElapsedMs': 180,
             'challengeLoadElapsedMs': 180,
-            'solveChallengeMs': 5000,
-            'powElapsedMs': 540
+            'solveChallengeMs': round(pow_elapsed_ms, 1),
+            'powElapsedMs': 540,
         }
 
         # Validate
-        validated = cap_session.get(
+        validate_headers = dict(captcha_headers, pcaptcha=json.dumps(captcha_object, separators=(',', ':')))
+        validated = self.session.get(
             f'{cap_base}/validate',
             params={'token': init_data['token'], 'contestId': init_data['contestId'], 'purpose': 'login'},
-            headers={'pcaptcha': json.dumps(captcha_object)},
+            headers=validate_headers,
+            timeout=15,
         )
         if validated.status_code != 200:
             raise InvalidCaptcha(f"Validate CAPTCHA returns code: {validated.status_code}")
 
         # Finalize
-        cap_session.get(
+        self.session.get(
             f'{cap_base}/finalize',
             params={'contestId': init_data['contestId'], 'purpose': 'login'},
+            headers=captcha_headers,
+            timeout=15,
         )
 
         return init_data['token']

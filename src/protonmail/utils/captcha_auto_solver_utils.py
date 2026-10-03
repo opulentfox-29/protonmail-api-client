@@ -5,6 +5,7 @@ https://github.com/gravilk/protonmail-documented/
 """
 
 import hashlib
+import time
 from typing import Optional
 
 import cv2
@@ -29,6 +30,14 @@ def solve_challenge(challenge: str, n_zeros: int) -> int:
             return curr
         else:
             curr += 1
+
+
+def solve_challenges(challenges: list[str], n_zeros: int) -> tuple[list[int], float]:
+    """Solve CAPTCHA proof-of-work challenges and return elapsed milliseconds."""
+    start = time.perf_counter()
+    answers = [solve_challenge(challenge, n_zeros) for challenge in challenges]
+    elapsed = (time.perf_counter() - start) * 1000
+    return answers, elapsed
 
 
 def get_captcha_puzzle_coordinates(image_bytes: bytes) -> Optional[tuple[int, int]]:
