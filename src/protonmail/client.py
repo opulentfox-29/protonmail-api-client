@@ -1200,7 +1200,6 @@ class ProtonMail:
             f'{urls_api["verify-api"]}/core/v4/captcha', params=params, headers={'authority': 'verify-api.proton.me'}
         ).text
         sub_token = self._extract_captcha_sub_token(js_captcha)
-
         if captcha_config.type == CaptchaConfig.CaptchaType.AUTO:
             proved_token = self._captcha_auto_solving(captcha_token)
             self.logger.info("CAPTCHA auto solved")
@@ -1216,10 +1215,14 @@ class ProtonMail:
         self.session.headers['x-pm-human-verification-token-type'] = 'captcha'
         self.session.headers['x-pm-human-verification-token'] = hvt_token
 
-    def _captcha_auto_solving(self, captcha_token: str) -> str:
+    def _captcha_auto_solving(self, captcha_token: str, max_attempts: int = 4) -> str:
         """Auto solve CAPTCHA. Reuses the main session so the request carries the same
         anonymous-session auth context (cookies/authorization/x-pm-uid) the HumanVerificationToken
-        was issued under - a bare disconnected session gets 401 Unauthorized from validate()."""
+        was issued under - a bare disconnected session gets 401 Unauthorized from validate().
+
+        validate() can reject a correctly-solved puzzle intermittently (e.g. edge bot-detection
+        scoring), so each attempt requests a fresh puzzle/contest via init() rather than retrying
+        the same one - init() takes the same captcha_token and hands back a new contest each time."""
         parent_url = f'{urls_api["verify-api"]}/core/v4/captcha?Token={captcha_token}&ForceWebMessaging=1&Dark=true'
         captcha_headers = {
             'accept': 'application/json',
@@ -1234,8 +1237,6 @@ class ProtonMail:
             'sec-fetch-site': 'same-origin',
         }
         cap_base = f'{urls_api["verify-api"]}/captcha/v1/api'
-
-        # Init
         init_params = {
             'challengeType': '2D',
             'parentURL': parent_url,
@@ -1244,52 +1245,59 @@ class ProtonMail:
             'purpose': 'login',
             'token': captcha_token,
         }
-        init_resp = self.session.get(f'{cap_base}/init', params=init_params, headers=captcha_headers, timeout=15)
-        init_data = init_resp.json()
 
-        # Get background and puzzle images
-        bg_resp = self.session.get(f'{cap_base}/bg', params={'token': init_data['token']}, headers=captcha_headers, timeout=15)
-        puzzle_resp = self.session.get(f'{cap_base}/puzzle', params={'token': init_data['token']}, headers=captcha_headers, timeout=15)
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
 
-        puzzle_coordinates = get_captcha_puzzle_coordinates(bg_resp.content, puzzle_resp.content)
-        if puzzle_coordinates is None:
-            raise CantSolveImageCaptcha("Maybe this image is hard, just retry login or use manual CAPTCHA solver")
+        last_error = None
+        for attempt in range(1, max_attempts + 1):
+            init_resp = self.session.get(f'{cap_base}/init', params=init_params, headers=captcha_headers, timeout=15)
+            init_data = init_resp.json()
 
-        n_zeros = init_data.get('nLeadingZerosRequired', 13)
-        answers, pow_elapsed_ms = solve_challenges(init_data['challenges'], n_zeros)
+            bg_resp = self.session.get(f'{cap_base}/bg', params={'token': init_data['token']}, headers=captcha_headers, timeout=15)
+            puzzle_resp = self.session.get(f'{cap_base}/puzzle', params={'token': init_data['token']}, headers=captcha_headers, timeout=15)
+            puzzle_coordinates = get_captcha_puzzle_coordinates(bg_resp.content, puzzle_resp.content)
+            if puzzle_coordinates is None:
+                last_error = CantSolveImageCaptcha("Maybe this image is hard, just retry login or use manual CAPTCHA solver")
+                continue
 
-        captcha_object = {
-            'x': puzzle_coordinates[0],
-            'y': puzzle_coordinates[1],
-            'answers': answers,
-            'clientData': None,
-            'pieceLoadElapsedMs': 140,
-            'bgLoadElapsedMs': 180,
-            'challengeLoadElapsedMs': 180,
-            'solveChallengeMs': round(pow_elapsed_ms, 1),
-            'powElapsedMs': 540,
-        }
+            n_zeros = init_data.get('nLeadingZerosRequired', 13)
+            answers, pow_elapsed_ms = solve_challenges(init_data['challenges'], n_zeros)
 
-        # Validate
-        validate_headers = dict(captcha_headers, pcaptcha=json.dumps(captcha_object, separators=(',', ':')))
-        validated = self.session.get(
-            f'{cap_base}/validate',
-            params={'token': init_data['token'], 'contestId': init_data['contestId'], 'purpose': 'login'},
-            headers=validate_headers,
-            timeout=15,
-        )
-        if validated.status_code != 200:
-            raise InvalidCaptcha(f"Validate CAPTCHA returns code: {validated.status_code}")
+            captcha_object = {
+                'x': puzzle_coordinates[0],
+                'y': puzzle_coordinates[1],
+                'answers': answers,
+                'clientData': None,
+                'pieceLoadElapsedMs': 140,
+                'bgLoadElapsedMs': 180,
+                'challengeLoadElapsedMs': 180,
+                'solveChallengeMs': round(pow_elapsed_ms, 1),
+                'powElapsedMs': 540,
+            }
+            validate_headers = dict(captcha_headers, pcaptcha=json.dumps(captcha_object, separators=(',', ':')))
+            validated = self.session.get(
+                f'{cap_base}/validate',
+                params={'token': init_data['token'], 'contestId': init_data['contestId'], 'purpose': 'login'},
+                headers=validate_headers,
+                timeout=15,
+            )
+            if validated.status_code != 200:
+                last_error = InvalidCaptcha(
+                    f"Validate CAPTCHA returns code: {validated.status_code}, body: {validated.text[:300]} "
+                    f"(attempt {attempt}/{max_attempts})"
+                )
+                continue
 
-        # Finalize
-        self.session.get(
-            f'{cap_base}/finalize',
-            params={'contestId': init_data['contestId'], 'purpose': 'login'},
-            headers=captcha_headers,
-            timeout=15,
-        )
+            self.session.get(
+                f'{cap_base}/finalize',
+                params={'contestId': init_data['contestId'], 'purpose': 'login'},
+                headers=captcha_headers,
+                timeout=15,
+            )
+            return init_data['token']
 
-        return init_data['token']
+        raise last_error
 
     def _verify_auth(self, auth: dict):
         if auth["Code"] in (1000, 1001):

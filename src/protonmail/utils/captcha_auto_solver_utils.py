@@ -16,7 +16,7 @@ Y_OFFSET = -34
 
 
 def solve_challenge(challenge: str, n_zeros: int) -> int:
-    """ Solve CAPTCHA challenge. """
+    """Solve a Proton CAPTCHA proof-of-work challenge."""
     curr = 0
     while True:
         input_str = f'{curr}{challenge}'
