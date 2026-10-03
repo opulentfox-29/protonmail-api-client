@@ -66,6 +66,7 @@ class ProtonMail:
         self.session = Session()
         self.session.proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else dict()
         self.session.headers.update(DEFAULT_HEADERS)
+        self._app_version_cache: dict[str, str] = {}
 
     def login(self, username: str, password: str, getter_2fa_code: callable = lambda: input("enter 2FA code:"), login_type: LoginType = LoginType.WEB,
               captcha_config: CaptchaConfig = CaptchaConfig()) -> None:
@@ -86,7 +87,7 @@ class ProtonMail:
         """
         self.session.headers['x-pm-appversion'] = PM_APP_VERSION_DEV
         if login_type == LoginType.WEB:
-            self.session.headers['x-pm-appversion'] = PM_APP_VERSION_ACCOUNT
+            self.session.headers['x-pm-appversion'] = self._get_app_version('account')
 
             anonym_session_info = self._crate_anonym_session()
             self._verify_auth(anonym_session_info)
@@ -147,7 +148,7 @@ class ProtonMail:
 
             response_data = self._post('account', 'auth/v4/sessions/forks', json=payload_for_create_fork).json()
 
-            self.session.headers['x-pm-appversion'] = PM_APP_VERSION_MAIL
+            self.session.headers['x-pm-appversion'] = self._get_app_version('mail')
             fork_data = self._get('mail', f"auth/v4/sessions/forks/{response_data['Selector']}").json()
             self._verify_auth(fork_data)
 
@@ -1109,6 +1110,26 @@ class ProtonMail:
         message = msg_mixed.as_string().replace('MIME-Version: 1.0\n', '')
 
         return message
+
+    def _get_app_version(self, app: str) -> str:
+        """Get the x-pm-appversion value Proton currently expects for 'account' or 'mail'.
+
+        These are hardcoded per-release strings (e.g. 'web-account@5.0.423.0') baked into
+        Proton's web app. A stale value gets every request rejected with Code 5003
+        ('This web page is out of date'), so fetch the live value from Proton's own
+        assets/version.json manifest instead, falling back to the bundled constant if that
+        fetch fails (offline, endpoint changed, etc.). Cached per-instance so repeated logins
+        don't re-fetch every time.
+        """
+        if app not in self._app_version_cache:
+            fallback = PM_APP_VERSION_ACCOUNT if app == 'account' else PM_APP_VERSION_MAIL
+            host = urls_api[app].rsplit('/api', 1)[0]
+            try:
+                version = self.session.get(f'{host}/assets/version.json', timeout=5).json()['version']
+                self._app_version_cache[app] = f'web-{app}@{version}'
+            except Exception:
+                self._app_version_cache[app] = fallback
+        return self._app_version_cache[app]
 
     def _crate_anonym_session(self) -> dict:
         """Create anonymous session."""

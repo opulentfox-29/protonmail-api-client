@@ -1,7 +1,7 @@
 """Constants."""
 
-PM_APP_VERSION_ACCOUNT = 'web-account@5.0.255.0'
-PM_APP_VERSION_MAIL = 'web-mail@5.0.66.5'
+PM_APP_VERSION_ACCOUNT = 'web-account@5.0.423.0'
+PM_APP_VERSION_MAIL = 'web-mail@5.0.134.11'
 PM_APP_VERSION_DEV = 'Other'
 API_VERSION = '4'
 SRP_LEN_BYTES = 256
