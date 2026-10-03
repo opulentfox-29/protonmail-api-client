@@ -1247,10 +1247,11 @@ class ProtonMail:
         init_resp = self.session.get(f'{cap_base}/init', params=init_params, headers=captcha_headers, timeout=15)
         init_data = init_resp.json()
 
-        # Get background image
+        # Get background and puzzle images
         bg_resp = self.session.get(f'{cap_base}/bg', params={'token': init_data['token']}, headers=captcha_headers, timeout=15)
+        puzzle_resp = self.session.get(f'{cap_base}/puzzle', params={'token': init_data['token']}, headers=captcha_headers, timeout=15)
 
-        puzzle_coordinates = get_captcha_puzzle_coordinates(bg_resp.content)
+        puzzle_coordinates = get_captcha_puzzle_coordinates(bg_resp.content, puzzle_resp.content)
         if puzzle_coordinates is None:
             raise CantSolveImageCaptcha("Maybe this image is hard, just retry login or use manual CAPTCHA solver")
 
