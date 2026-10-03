@@ -1152,6 +1152,35 @@ class ProtonMail:
 
         return client_challenge, client_proof, spr_session
 
+    @staticmethod
+    def _extract_captcha_sub_token(js_captcha: str) -> str:
+        found_send_token = False
+
+        for match in re.finditer(r"\bsendToken\s*\(", js_captcha):
+            before_call = js_captcha[:match.start()].rstrip()
+            if re.search(r"\bfunction$", before_call):
+                found_send_token = True
+                continue
+
+            found_send_token = True
+            expression_start = match.end()
+            expression_end = js_captcha.find(");", expression_start)
+            if expression_end == -1:
+                continue
+
+            expression = js_captcha[expression_start:expression_end].strip()
+            literals = re.findall(r"""(['"`])([^'"`]+)\1\s*\+""", expression)
+            if literals:
+                return ''.join(literal for _, literal in literals)
+
+        if found_send_token:
+            return ''
+
+        raise InvalidCaptcha(
+            "Could not find a sendToken(...) call on the human verification page; "
+            "its structure may have changed. Snippet: " + js_captcha[:400]
+        )
+
     def _captcha_processing(self, auth: dict, captcha_config: CaptchaConfig):
         """ Processing CAPTCHA logic. """
         self.logger.warning("Got CAPTCHA")
@@ -1159,10 +1188,10 @@ class ProtonMail:
         params = {
             'Token': captcha_token,
             'ForceWebMessaging': 1,
+            'Dark': 'true',
         }
-        js_captcha = self._get('account-api', 'core/v4/captcha', params=params).text
-        send_token_func = re.search(r"return sendToken\((.*?)\);", js_captcha).group(1)
-        sub_token = ''.join(re.findall(r"'([^']+)'", send_token_func))
+        js_captcha = self._get('verify-api', 'core/v4/captcha', params=params).text
+        sub_token = self._extract_captcha_sub_token(js_captcha)
 
         if captcha_config.type == CaptchaConfig.CaptchaType.AUTO:
             proved_token = self._captcha_auto_solving(captcha_token)
@@ -1171,7 +1200,10 @@ class ProtonMail:
             proved_token = captcha_config.function_for_manual(auth)
             self.logger.info("CAPTCHA manual solved")
 
-        hvt_token = f'{captcha_token}:{sub_token}{proved_token}'
+        if proved_token.startswith(f'{captcha_token}:'):
+            hvt_token = proved_token
+        else:
+            hvt_token = f'{captcha_token}:{sub_token}{proved_token}'
 
         self.session.headers['x-pm-human-verification-token-type'] = 'captcha'
         self.session.headers['x-pm-human-verification-token'] = hvt_token
@@ -1184,12 +1216,12 @@ class ProtonMail:
             'content-type': 'application/json',
             'user-agent': self.session.headers.get('user-agent', ''),
         })
-        cap_base = 'https://account-api.proton.me/captcha/v1/api'
+        cap_base = f'{urls_api["verify-api"]}/captcha/v1/api'
 
         # Init
         init_params = {
             'challengeType': '2D',
-            'parentURL': f'https://account-api.proton.me/core/v4/captcha?Token={captcha_token}&ForceWebMessaging=1',
+            'parentURL': f'{urls_api["verify-api"]}/core/v4/captcha?Token={captcha_token}&ForceWebMessaging=1&Dark=true',
             'displayedLang': 'en',
             'supportedLangs': 'en,en,en,en',
             'purpose': 'login',
